@@ -37,6 +37,7 @@ CATEGORY_RULES = {
         "dirk",
         "supermarkt"
     ],
+
     "Vervoer": [
         "shell",
         "esso",
@@ -48,6 +49,7 @@ CATEGORY_RULES = {
         "bolt",
         "anwb"
     ],
+
     "Entertainment": [
         "netflix",
         "spotify",
@@ -56,6 +58,7 @@ CATEGORY_RULES = {
         "pathe",
         "bioscoop"
     ],
+
     "Wonen": [
         "vattenfall",
         "essent",
@@ -65,6 +68,7 @@ CATEGORY_RULES = {
         "huur",
         "hypotheek"
     ],
+
     "Inkomen": [
         "salaris",
         "salary",
@@ -78,10 +82,13 @@ CATEGORY_RULES = {
 # ==========================================
 
 def categorize_transaction(description):
+
     description = str(description).lower()
 
     for category, keywords in CATEGORY_RULES.items():
+
         for keyword in keywords:
+
             if keyword in description:
                 return category
 
@@ -123,7 +130,6 @@ if uploaded_file is not None:
             .str.lower()
         )
 
-        # Lege kolommen verwijderen
         df = df.dropna(
             axis=1,
             how="all"
@@ -137,6 +143,8 @@ if uploaded_file is not None:
             "description",
             "omschrijving",
             "beschrijving",
+            "name / description",
+            "name",
             "naam",
             "details",
             "merchant",
@@ -146,22 +154,43 @@ if uploaded_file is not None:
 
         amount_options = [
             "amount",
+            "amount (eur)",
+            "amount (euro)",
             "bedrag",
             "waarde",
             "transactiebedrag"
         ]
 
+        date_options = [
+            "date",
+            "datum",
+            "transaction date",
+            "transactiedatum"
+        ]
+
         description_column = None
         amount_column = None
+        date_column = None
 
+        # Omschrijving zoeken
         for column in description_options:
+
             if column in df.columns:
                 description_column = column
                 break
 
+        # Bedrag zoeken
         for column in amount_options:
+
             if column in df.columns:
                 amount_column = column
+                break
+
+        # Datum zoeken
+        for column in date_options:
+
+            if column in df.columns:
+                date_column = column
                 break
 
         # ==================================
@@ -177,7 +206,7 @@ if uploaded_file is not None:
             st.write("Kolommen gevonden:")
 
             st.code(
-                ", ".join(df.columns)
+                "\n".join(df.columns)
             )
 
             st.stop()
@@ -191,10 +220,21 @@ if uploaded_file is not None:
             st.write("Kolommen gevonden:")
 
             st.code(
-                ", ".join(df.columns)
+                "\n".join(df.columns)
             )
 
             st.stop()
+
+        # ==================================
+        # DATUM NORMALISEREN
+        # ==================================
+
+        if date_column is not None:
+
+            df[date_column] = pd.to_datetime(
+                df[date_column],
+                errors="coerce"
+            )
 
         # ==================================
         # BEDRAGEN NORMALISEREN
@@ -203,7 +243,13 @@ if uploaded_file is not None:
         df[amount_column] = (
             df[amount_column]
             .astype(str)
+            .str.strip()
             .str.replace("€", "", regex=False)
+        )
+
+        # Europese decimalen ondersteunen
+        df[amount_column] = (
+            df[amount_column]
             .str.replace(".", "", regex=False)
             .str.replace(",", ".", regex=False)
         )
@@ -264,18 +310,21 @@ if uploaded_file is not None:
         col1, col2, col3 = st.columns(3)
 
         with col1:
+
             st.metric(
                 "💰 Inkomsten",
                 f"€ {income:,.2f}"
             )
 
         with col2:
+
             st.metric(
                 "💸 Uitgaven",
                 f"€ {abs(expenses):,.2f}"
             )
 
         with col3:
+
             st.metric(
                 "📈 Netto",
                 f"€ {balance:,.2f}"
@@ -285,7 +334,9 @@ if uploaded_file is not None:
         # UITGAVEN PER CATEGORIE
         # ==================================
 
-        st.subheader("💸 Uitgaven per categorie")
+        st.subheader(
+            "💸 Uitgaven per categorie"
+        )
 
         expense_df = df[
             df[amount_column] < 0
@@ -309,7 +360,9 @@ if uploaded_file is not None:
         # CATEGORIE OVERZICHT
         # ==================================
 
-        st.subheader("📋 Overzicht categorieën")
+        st.subheader(
+            "📋 Overzicht categorieën"
+        )
 
         category_table = (
             expense_df
@@ -341,5 +394,3 @@ if uploaded_file is not None:
         st.error(
             f"❌ Het bestand kon niet worden gelezen: {e}"
         )
-
-        st.write
