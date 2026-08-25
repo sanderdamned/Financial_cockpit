@@ -27,6 +27,7 @@ st.markdown(
 # ==========================================
 
 CATEGORY_RULES = {
+   CATEGORY_RULES = {
     "Boodschappen": [
         "albert heijn",
         "ah ",
@@ -35,6 +36,7 @@ CATEGORY_RULES = {
         "lidl",
         "aldi",
         "dirk",
+        "coop",
         "supermarkt"
     ],
 
@@ -43,11 +45,23 @@ CATEGORY_RULES = {
         "esso",
         "bp",
         "total",
+        "texaco",
         "ns ",
         "ov-chipkaart",
         "uber",
         "bolt",
         "anwb"
+    ],
+
+    "Horeca": [
+        "restaurant",
+        "cafe",
+        "café",
+        "mcdonald",
+        "burger king",
+        "starbucks",
+        "thuisbezorgd",
+        "uber eats"
     ],
 
     "Entertainment": [
@@ -56,7 +70,14 @@ CATEGORY_RULES = {
         "disney",
         "prime video",
         "pathe",
-        "bioscoop"
+        "bioscoop",
+        "youtube"
+    ],
+
+    "Abonnementen": [
+        "subscription",
+        "membership",
+        "abonnement"
     ],
 
     "Wonen": [
@@ -69,12 +90,76 @@ CATEGORY_RULES = {
         "hypotheek"
     ],
 
+    "Verzekeringen": [
+        "verzekering",
+        "verzekeringen",
+        "achmea",
+        "interpolis",
+        "ohra"
+    ],
+
+    "Gezondheid": [
+        "apotheek",
+        "ziekenhuis",
+        "tandarts",
+        "dokter",
+        "huisarts"
+    ],
+
+    "Kleding": [
+        "zara",
+        "h&m",
+        "uniqlo",
+        "nike",
+        "adidas"
+    ],
+
+    "Persoonlijke verzorging": [
+        "kapper",
+        "barber",
+        "rituals",
+        "douglas"
+    ],
+
+    "Kinderen": [
+        "school",
+        "kinderopvang",
+        "creche",
+        "crèche",
+        "kinderdagverblijf"
+    ],
+
+    "Vakantie": [
+        "booking.com",
+        "airbnb",
+        "hotel",
+        "camping"
+    ],
+
     "Inkomen": [
         "salaris",
         "salary",
         "loon"
     ]
 }
+CATEGORIES = [
+    "Inkomen",
+    "Boodschappen",
+    "Wonen",
+    "Vervoer",
+    "Horeca",
+    "Entertainment",
+    "Abonnementen",
+    "Gezondheid",
+    "Verzekeringen",
+    "Kinderen",
+    "Vakantie",
+    "Kleding",
+    "Persoonlijke verzorging",
+    "Belastingen",
+    "Overboekingen",
+    "Overig"
+]
 
 
 # ==========================================
@@ -331,11 +416,23 @@ if uploaded_file is not None:
 
         st.subheader("💳 Transacties")
 
-        st.dataframe(
-            df,
-            use_container_width=True,
-            hide_index=True
+      edited_df = st.data_editor(
+    df,
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "category": st.column_config.SelectboxColumn(
+            "Categorie",
+            options=CATEGORIES,
+            required=True
         )
+    },
+    disabled=[
+        column
+        for column in df.columns
+        if column != "category"
+    ]
+)
 
         # ==================================
         # INKOMSTEN
