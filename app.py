@@ -1,4 +1,4 @@
-```python
+
 import streamlit as st
 import pandas as pd
 import hashlib
@@ -1116,4 +1116,3 @@ else:
     st.info(
         "Upload transacties om je financiële overzicht te zien."
     )
-```
