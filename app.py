@@ -38,7 +38,7 @@ CATEGORY_RULES = {
         "dirk",
         "coop",
         "supermarkt"
-    ],
+    ]},
 
     "Vervoer": [
         "shell",
