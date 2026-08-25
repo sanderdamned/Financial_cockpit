@@ -7,6 +7,7 @@ from supabase import create_client
 # CONFIGURATIE
 # ==========================================
 
+
 st.set_page_config(
     page_title="Financial Cockpit",
     page_icon="💰",
@@ -20,6 +21,15 @@ st.markdown(
     Upload hieronder je banktransacties als CSV.
     De transacties worden automatisch ingelezen en gecategoriseerd.
     """
+)
+
+# ==========================================
+# SUPABASE
+# ==========================================
+
+supabase = create_client(
+    st.secrets["SUPABASE_URL"],
+    st.secrets["SUPABASE_KEY"]
 )
 
 
