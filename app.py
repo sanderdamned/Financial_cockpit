@@ -27,7 +27,6 @@ st.markdown(
 # ==========================================
 
 CATEGORY_RULES = {
-   CATEGORY_RULES = {
     "Boodschappen": [
         "albert heijn",
         "ah ",
@@ -38,7 +37,7 @@ CATEGORY_RULES = {
         "dirk",
         "coop",
         "supermarkt"
-    ]},
+    ],
 
     "Vervoer": [
         "shell",
@@ -142,6 +141,12 @@ CATEGORY_RULES = {
         "loon"
     ]
 }
+
+
+# ==========================================
+# BESCHIKBARE CATEGORIEËN
+# ==========================================
+
 CATEGORIES = [
     "Inkomen",
     "Boodschappen",
@@ -265,28 +270,28 @@ if uploaded_file is not None:
         date_column = None
         debit_credit_column = None
 
-        # Omschrijving
+        # Omschrijving zoeken
         for column in description_options:
 
             if column in df.columns:
                 description_column = column
                 break
 
-        # Bedrag
+        # Bedrag zoeken
         for column in amount_options:
 
             if column in df.columns:
                 amount_column = column
                 break
 
-        # Datum
+        # Datum zoeken
         for column in date_options:
 
             if column in df.columns:
                 date_column = column
                 break
 
-        # Debit / Credit
+        # Debit / Credit zoeken
         for column in debit_credit_options:
 
             if column in df.columns:
@@ -380,9 +385,6 @@ if uploaded_file is not None:
             .str.lower()
         )
 
-        # Credit = inkomen
-        # Debit = uitgave
-
         df["flow"] = df["transaction_type"].apply(
             lambda x:
                 "Inkomst"
@@ -411,28 +413,31 @@ if uploaded_file is not None:
         )
 
         # ==================================
-        # TRANSACTIES
+        # TRANSACTIES BEWERKEN
         # ==================================
 
         st.subheader("💳 Transacties")
 
-      edited_df = st.data_editor(
-    df,
-    use_container_width=True,
-    hide_index=True,
-    column_config={
-        "category": st.column_config.SelectboxColumn(
-            "Categorie",
-            options=CATEGORIES,
-            required=True
+        edited_df = st.data_editor(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "category": st.column_config.SelectboxColumn(
+                    "Categorie",
+                    options=CATEGORIES,
+                    required=True
+                )
+            },
+            disabled=[
+                column
+                for column in df.columns
+                if column != "category"
+            ]
         )
-    },
-    disabled=[
-        column
-        for column in df.columns
-        if column != "category"
-    ]
-)
+
+        # Gebruik de aangepaste data vanaf hier
+        df = edited_df
 
         # ==================================
         # INKOMSTEN
