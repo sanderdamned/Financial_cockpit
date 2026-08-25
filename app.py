@@ -36,6 +36,10 @@ try:
 
     supabase_available = True
 
+    st.write(
+        "Supabase URL:", st.secrets["SUPABASE_URL"]
+    )
+
 except Exception as e:
 
     supabase_available = False
