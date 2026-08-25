@@ -904,34 +904,34 @@ if uploaded_file is not None:
         # ----------------------------------------------------
 
        df["transaction_hash"] = df.apply(
-    lambda row:
-        create_transaction_hash(
+        lambda row:
+            create_transaction_hash(
             row[date_column],
             row[description_column],
             row[amount_column],
             row["transaction_type"]
         ),
-    axis=1
-)
+        axis=1
+        )
         # ----------------------------------------------------
         # REMOVE DUPLICATE TRANSACTIONS
         # ----------------------------------------------------
 
-    before_count = len(df)
+        before_count = len(df)
 
-df = df.drop_duplicates(
-    subset=["transaction_hash"],
-    keep="first"
-)
+        df = df.drop_duplicates(
+        subset=["transaction_hash"],
+        keep="first"
+        )
 
-duplicate_count = before_count - len(df)
+        duplicate_count = before_count - len(df)
 
-if duplicate_count > 0:
+        if duplicate_count > 0:
 
-    st.info(
-        f"ℹ️ {duplicate_count} dubbele transacties "
-        f"uit deze import overgeslagen."
-    )
+        st.info(
+            f"ℹ️ {duplicate_count} dubbele transacties "
+            f"uit deze import overgeslagen."
+        )
 
 
         # ----------------------------------------------------
