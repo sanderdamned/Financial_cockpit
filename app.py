@@ -955,7 +955,7 @@ if uploaded_file is not None:
                         "account_id": selected_account_id,
 
                         "date":
-                            row[date_column].date(),
+                            row[date_column].strftime("%Y-%m-%d"),
 
                         "description":
                             str(
