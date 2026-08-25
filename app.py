@@ -1210,6 +1210,59 @@ else:
         "Nog geen transacties voor deze rekening."
     )
 
+# ============================================================
+# BUDGET FUNCTIONS
+# ============================================================
+
+def load_budgets(user_id):
+    try:
+
+        result = (
+            supabase
+            .table("budgets")
+            .select("*")
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as e:
+
+        st.error(
+            f"❌ Budgetten konden niet worden geladen: {e}"
+        )
+
+        return []
+
+
+def save_budget(user_id, category, monthly_limit):
+
+    try:
+
+        result = (
+            supabase
+            .table("budgets")
+            .upsert(
+                {
+                    "user_id": user_id,
+                    "category": category,
+                    "monthly_limit": float(monthly_limit)
+                },
+                on_conflict="user_id,category"
+            )
+            .execute()
+        )
+
+        return result.data
+
+    except Exception as e:
+
+        st.error(
+            f"❌ Budget kon niet worden opgeslagen: {e}"
+        )
+
+        return None
 
 # ============================================================
 # DASHBOARD
@@ -1309,5 +1362,231 @@ else:
     st.info(
         "Upload transacties om je financiële "
         "overzicht te zien."
+    )
+    # ============================================================
+# BUDGETTEN
+# ============================================================
+
+st.divider()
+
+st.subheader("🎯 Mijn budgetten")
+
+
+budgets = load_budgets(user_id)
+
+
+# ------------------------------------------------------------
+# BUDGET INSTELLEN
+# ------------------------------------------------------------
+
+with st.expander(
+    "➕ Budget instellen"
+):
+
+    budget_category = st.selectbox(
+        "Categorie",
+        [
+            category
+            for category in CATEGORIES
+            if category != "Inkomen"
+        ]
+    )
+
+    budget_amount = st.number_input(
+        "Maandelijks budget",
+        min_value=0.0,
+        step=25.0,
+        value=250.0,
+        format="%.2f"
+    )
+
+    if st.button(
+        "💾 Budget opslaan",
+        type="primary",
+        use_container_width=True
+    ):
+
+        result = save_budget(
+            user_id,
+            budget_category,
+            budget_amount
+        )
+
+        if result is not None:
+
+            st.success(
+                f"✅ Budget voor {budget_category} opgeslagen."
+            )
+
+            st.rerun()
+
+
+# ------------------------------------------------------------
+# BUDGET DATA
+# ------------------------------------------------------------
+
+if budgets and transactions:
+
+    budget_df = pd.DataFrame(
+        budgets
+    )
+
+    transaction_df = pd.DataFrame(
+        transactions
+    )
+
+    # Alleen uitgaven
+    expense_df = transaction_df[
+        transaction_df["flow"] == "Uitgave"
+    ].copy()
+
+    # Zorg dat bedragen positief worden
+    expense_df["expense_amount"] = (
+        expense_df["amount"].abs()
+    )
+
+    # Uitgaven per categorie
+    spending = (
+        expense_df
+        .groupby("category")["expense_amount"]
+        .sum()
+        .to_dict()
+    )
+
+    # --------------------------------------------------------
+    # BUDGET OVERZICHT
+    # --------------------------------------------------------
+
+    budget_rows = []
+
+    for _, budget in budget_df.iterrows():
+
+        category = budget["category"]
+
+        budget_amount = float(
+            budget["monthly_limit"]
+        )
+
+        spent = float(
+            spending.get(
+                category,
+                0
+            )
+        )
+
+        remaining = (
+            budget_amount - spent
+        )
+
+        percentage = (
+            spent / budget_amount * 100
+            if budget_amount > 0
+            else 0
+        )
+
+        budget_rows.append(
+            {
+                "Categorie": category,
+                "Budget": budget_amount,
+                "Uitgegeven": spent,
+                "Resterend": remaining,
+                "% gebruikt": percentage
+            }
+        )
+
+
+    budget_overview = pd.DataFrame(
+        budget_rows
+    )
+
+
+    # --------------------------------------------------------
+    # DISPLAY
+    # --------------------------------------------------------
+
+    for _, row in budget_overview.iterrows():
+
+        category = row["Categorie"]
+
+        budget_amount = row["Budget"]
+
+        spent = row["Uitgegeven"]
+
+        remaining = row["Resterend"]
+
+        percentage = row["% gebruikt"]
+
+
+        st.markdown(
+            f"### {category}"
+        )
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+
+            st.metric(
+                "Budget",
+                f"€ {budget_amount:,.2f}"
+            )
+
+        with col2:
+
+            st.metric(
+                "Uitgegeven",
+                f"€ {spent:,.2f}"
+            )
+
+        with col3:
+
+            st.metric(
+                "Resterend",
+                f"€ {remaining:,.2f}"
+            )
+
+
+        # Limiteer progress bar op 100%
+        progress = min(
+            max(
+                percentage / 100,
+                0
+            ),
+            1
+        )
+
+        st.progress(
+            progress
+        )
+
+        if percentage > 100:
+
+            st.error(
+                f"⚠️ Budget overschreden met "
+                f"€ {abs(remaining):,.2f}"
+            )
+
+        elif percentage >= 80:
+
+            st.warning(
+                f"⚠️ {percentage:.0f}% van je budget gebruikt."
+            )
+
+        else:
+
+            st.success(
+                f"✅ {percentage:.0f}% van je budget gebruikt."
+            )
+
+
+elif budgets:
+
+    st.info(
+        "Er zijn nog geen transacties om je budgetten mee te vergelijken."
+    )
+
+else:
+
+    st.info(
+        "Je hebt nog geen budgetten ingesteld."
     )
 
