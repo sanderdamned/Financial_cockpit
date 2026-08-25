@@ -218,6 +218,10 @@ def create_transaction_hash(
     ).hexdigest()
 
 
+# ============================================================
+# DATABASE FUNCTIONS
+# ============================================================
+
 def load_accounts(user_id):
 
     try:
@@ -270,8 +274,67 @@ def load_transactions(
         return []
 
 
+def load_budgets(user_id):
+
+    try:
+
+        result = (
+            supabase
+            .table("budgets")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("category")
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as e:
+
+        st.error(
+            f"❌ Budgetten konden niet worden geladen: {e}"
+        )
+
+        return []
+
+
+def save_budget(
+    user_id,
+    category,
+    monthly_limit
+):
+
+    try:
+
+        result = (
+            supabase
+            .table("budgets")
+            .upsert(
+                {
+                    "user_id": user_id,
+                    "category": category,
+                    "monthly_limit": float(
+                        monthly_limit
+                    )
+                },
+                on_conflict="user_id,category"
+            )
+            .execute()
+        )
+
+        return result.data
+
+    except Exception as e:
+
+        st.error(
+            f"❌ Budget kon niet worden opgeslagen: {e}"
+        )
+
+        return None
+
+
 # ============================================================
-# LOGIN SCREEN
+# LOGIN
 # ============================================================
 
 def show_login():
@@ -289,9 +352,10 @@ def show_login():
         ]
     )
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # LOGIN
-    # --------------------------------------------------------
+    # ========================================================
 
     with login_tab:
 
@@ -366,9 +430,10 @@ def show_login():
                     f"❌ Inloggen mislukt: {e}"
                 )
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # REGISTER
-    # --------------------------------------------------------
+    # ========================================================
 
     with register_tab:
 
@@ -472,7 +537,9 @@ if (
         "Je sessie is niet meer beschikbaar."
     )
 
-    if st.button("Opnieuw inloggen"):
+    if st.button(
+        "Opnieuw inloggen"
+    ):
 
         st.session_state.clear()
 
@@ -514,12 +581,15 @@ header_left, header_right = st.columns(
 
 with header_left:
 
-    st.title("💰 Financial Cockpit")
-
+    st.title(
+        "💰 Financial Cockpit"
+    )
 
 with header_right:
 
-    if st.button("Uitloggen"):
+    if st.button(
+        "Uitloggen"
+    ):
 
         try:
 
@@ -540,7 +610,7 @@ st.caption(
 
 
 # ============================================================
-# LOAD ACCOUNTS
+# ACCOUNTS
 # ============================================================
 
 accounts = load_accounts(
@@ -548,13 +618,10 @@ accounts = load_accounts(
 )
 
 
-# ============================================================
-# ADD ACCOUNT
-# ============================================================
-
 st.subheader(
     "🏦 Mijn rekeningen"
 )
+
 
 with st.expander(
     "➕ Bankrekening toevoegen",
@@ -620,22 +687,12 @@ with st.expander(
 
                     st.rerun()
 
-                else:
-
-                    st.error(
-                        "De rekening kon niet worden toegevoegd."
-                    )
-
             except Exception as e:
 
                 st.error(
                     f"❌ Rekening kon niet worden toegevoegd: {e}"
                 )
 
-
-# ============================================================
-# NO ACCOUNTS
-# ============================================================
 
 if not accounts:
 
@@ -679,6 +736,7 @@ st.subheader(
     "📁 Transacties importeren"
 )
 
+
 uploaded_file = st.file_uploader(
     "Upload je banktransacties als CSV",
     type=["csv"]
@@ -689,18 +747,15 @@ if uploaded_file is not None:
 
     try:
 
-        # ----------------------------------------------------
-        # READ CSV
-        # ----------------------------------------------------
-
         df = pd.read_csv(
             uploaded_file,
             sep=None,
             engine="python"
         )
 
+
         # ----------------------------------------------------
-        # CLEAN COLUMN NAMES
+        # CLEAN COLUMNS
         # ----------------------------------------------------
 
         df.columns = (
@@ -714,6 +769,7 @@ if uploaded_file is not None:
             axis=1,
             how="all"
         )
+
 
         # ----------------------------------------------------
         # COLUMN OPTIONS
@@ -755,6 +811,7 @@ if uploaded_file is not None:
             "type"
         ]
 
+
         # ----------------------------------------------------
         # FIND COLUMNS
         # ----------------------------------------------------
@@ -794,6 +851,7 @@ if uploaded_file is not None:
             ),
             None
         )
+
 
         # ----------------------------------------------------
         # VALIDATION
@@ -906,6 +964,7 @@ if uploaded_file is not None:
             .str.lower()
         )
 
+
         df["flow"] = df[
             "transaction_type"
         ].apply(
@@ -943,7 +1002,7 @@ if uploaded_file is not None:
 
 
         # ----------------------------------------------------
-        # TRANSACTION HASH
+        # HASH
         # ----------------------------------------------------
 
         df["transaction_hash"] = df.apply(
@@ -959,7 +1018,7 @@ if uploaded_file is not None:
 
 
         # ----------------------------------------------------
-        # REMOVE DUPLICATES INSIDE CSV
+        # REMOVE DUPLICATES
         # ----------------------------------------------------
 
         before_count = len(df)
@@ -977,38 +1036,13 @@ if uploaded_file is not None:
 
             st.info(
                 f"ℹ️ {duplicate_count} dubbele "
-                f"transacties uit deze import "
-                f"overgeslagen."
+                f"transacties overgeslagen."
             )
 
 
         # ----------------------------------------------------
         # REMOVE INVALID ROWS
         # ----------------------------------------------------
-
-        invalid_date_count = df[
-            date_column
-        ].isna().sum()
-
-        invalid_amount_count = df[
-            amount_column
-        ].isna().sum()
-
-        if invalid_date_count > 0:
-
-            st.warning(
-                f"⚠️ {invalid_date_count} transacties "
-                f"hebben geen geldige datum en "
-                f"worden overgeslagen."
-            )
-
-        if invalid_amount_count > 0:
-
-            st.warning(
-                f"⚠️ {invalid_amount_count} transacties "
-                f"hebben geen geldig bedrag en "
-                f"worden overgeslagen."
-            )
 
         df = df[
             df[date_column].notna()
@@ -1024,6 +1058,7 @@ if uploaded_file is not None:
             f"✅ {len(df):,} geldige transacties gevonden"
         )
 
+
         preview_columns = [
             date_column,
             description_column,
@@ -1032,6 +1067,7 @@ if uploaded_file is not None:
             "flow",
             "category"
         ]
+
 
         st.dataframe(
             df[preview_columns],
@@ -1091,14 +1127,10 @@ if uploaded_file is not None:
                             ),
 
                         "flow":
-                            row[
-                                "flow"
-                            ],
+                            row["flow"],
 
                         "category":
-                            row[
-                                "category"
-                            ],
+                            row["category"],
 
                         "transaction_type":
                             row[
@@ -1113,13 +1145,7 @@ if uploaded_file is not None:
                 )
 
 
-            if not transactions_to_insert:
-
-                st.error(
-                    "❌ Geen geldige transacties gevonden."
-                )
-
-            else:
+            if transactions_to_insert:
 
                 try:
 
@@ -1136,12 +1162,14 @@ if uploaded_file is not None:
                         .execute()
                     )
 
+
                     st.success(
                         f"✅ {len(result.data)} "
                         f"transacties verwerkt."
                     )
 
                     st.rerun()
+
 
                 except Exception as e:
 
@@ -1150,13 +1178,29 @@ if uploaded_file is not None:
                         f"worden opgeslagen: {e}"
                     )
 
+            else:
+
+                st.error(
+                    "❌ Geen geldige transacties gevonden."
+                )
+
 
     except Exception as e:
 
         st.error(
-            f"❌ Het CSV-bestand kon niet "
+            "❌ Het CSV-bestand kon niet "
             f"worden verwerkt: {e}"
         )
+
+
+# ============================================================
+# LOAD TRANSACTIONS
+# ============================================================
+
+transactions = load_transactions(
+    user_id,
+    selected_account_id
+)
 
 
 # ============================================================
@@ -1169,17 +1213,13 @@ st.subheader(
     "💳 Mijn transacties"
 )
 
-transactions = load_transactions(
-    user_id,
-    selected_account_id
-)
-
 
 if transactions:
 
     transactions_df = pd.DataFrame(
         transactions
     )
+
 
     display_columns = [
         "date",
@@ -1190,11 +1230,13 @@ if transactions:
         "category"
     ]
 
+
     available_columns = [
         column
         for column in display_columns
         if column in transactions_df.columns
     ]
+
 
     st.dataframe(
         transactions_df[
@@ -1204,65 +1246,13 @@ if transactions:
         hide_index=True
     )
 
+
 else:
 
     st.info(
         "Nog geen transacties voor deze rekening."
     )
 
-# ============================================================
-# BUDGET FUNCTIONS
-# ============================================================
-
-def load_budgets(user_id):
-    try:
-
-        result = (
-            supabase
-            .table("budgets")
-            .select("*")
-            .eq("user_id", user_id)
-            .execute()
-        )
-
-        return result.data or []
-
-    except Exception as e:
-
-        st.error(
-            f"❌ Budgetten konden niet worden geladen: {e}"
-        )
-
-        return []
-
-
-def save_budget(user_id, category, monthly_limit):
-
-    try:
-
-        result = (
-            supabase
-            .table("budgets")
-            .upsert(
-                {
-                    "user_id": user_id,
-                    "category": category,
-                    "monthly_limit": float(monthly_limit)
-                },
-                on_conflict="user_id,category"
-            )
-            .execute()
-        )
-
-        return result.data
-
-    except Exception as e:
-
-        st.error(
-            f"❌ Budget kon niet worden opgeslagen: {e}"
-        )
-
-        return None
 
 # ============================================================
 # DASHBOARD
@@ -1281,24 +1271,28 @@ if transactions:
         transactions
     )
 
+
     income = dashboard_df.loc[
         dashboard_df["flow"] == "Inkomst",
         "amount"
     ].sum()
+
 
     expenses = dashboard_df.loc[
         dashboard_df["flow"] == "Uitgave",
         "amount"
     ].sum()
 
+
     balance = income - expenses
 
 
     # --------------------------------------------------------
-    # KPI'S
+    # KPI
     # --------------------------------------------------------
 
     col1, col2, col3 = st.columns(3)
+
 
     with col1:
 
@@ -1307,12 +1301,14 @@ if transactions:
             f"€ {income:,.2f}"
         )
 
+
     with col2:
 
         st.metric(
             "💸 Uitgaven",
             f"€ {expenses:,.2f}"
         )
+
 
     with col3:
 
@@ -1330,6 +1326,7 @@ if transactions:
         "💸 Uitgaven per categorie"
     )
 
+
     expense_df = dashboard_df[
         dashboard_df["flow"] == "Uitgave"
     ].copy()
@@ -1346,9 +1343,11 @@ if transactions:
             )
         )
 
+
         st.bar_chart(
             category_summary
         )
+
 
     else:
 
@@ -1363,24 +1362,36 @@ else:
         "Upload transacties om je financiële "
         "overzicht te zien."
     )
-    # ============================================================
+
+
+# ============================================================
 # BUDGETTEN
 # ============================================================
 
 st.divider()
 
-st.subheader("🎯 Mijn budgetten")
+st.subheader(
+    "🎯 Mijn budgetten"
+)
 
 
-budgets = load_budgets(user_id)
+st.markdown(
+    "Stel per categorie een maximaal bedrag per maand in."
+)
 
 
-# ------------------------------------------------------------
+budgets = load_budgets(
+    user_id
+)
+
+
+# ============================================================
 # BUDGET INSTELLEN
-# ------------------------------------------------------------
+# ============================================================
 
 with st.expander(
-    "➕ Budget instellen"
+    "➕ Budget instellen",
+    expanded=False
 ):
 
     budget_category = st.selectbox(
@@ -1389,16 +1400,20 @@ with st.expander(
             category
             for category in CATEGORIES
             if category != "Inkomen"
-        ]
+        ],
+        key="budget_category"
     )
+
 
     budget_amount = st.number_input(
         "Maandelijks budget",
         min_value=0.0,
         step=25.0,
         value=250.0,
-        format="%.2f"
+        format="%.2f",
+        key="budget_amount"
     )
+
 
     if st.button(
         "💾 Budget opslaan",
@@ -1412,6 +1427,7 @@ with st.expander(
             budget_amount
         )
 
+
         if result is not None:
 
             st.success(
@@ -1421,172 +1437,251 @@ with st.expander(
             st.rerun()
 
 
-# ------------------------------------------------------------
-# BUDGET DATA
-# ------------------------------------------------------------
+# ============================================================
+# BUDGET OVERVIEW
+# ============================================================
 
-if budgets and transactions:
+if budgets:
 
     budget_df = pd.DataFrame(
         budgets
     )
 
-    transaction_df = pd.DataFrame(
-        transactions
-    )
-
-    # Alleen uitgaven
-    expense_df = transaction_df[
-        transaction_df["flow"] == "Uitgave"
-    ].copy()
-
-    # Zorg dat bedragen positief worden
-    expense_df["expense_amount"] = (
-        expense_df["amount"].abs()
-    )
-
-    # Uitgaven per categorie
-    spending = (
-        expense_df
-        .groupby("category")["expense_amount"]
-        .sum()
-        .to_dict()
-    )
 
     # --------------------------------------------------------
-    # BUDGET OVERZICHT
+    # AVAILABLE MONTHS
     # --------------------------------------------------------
 
-    budget_rows = []
+    if transactions:
 
-    for _, budget in budget_df.iterrows():
-
-        category = budget["category"]
-
-        budget_amount = float(
-            budget["monthly_limit"]
-        )
-
-        spent = float(
-            spending.get(
-                category,
-                0
-            )
-        )
-
-        remaining = (
-            budget_amount - spent
-        )
-
-        percentage = (
-            spent / budget_amount * 100
-            if budget_amount > 0
-            else 0
-        )
-
-        budget_rows.append(
-            {
-                "Categorie": category,
-                "Budget": budget_amount,
-                "Uitgegeven": spent,
-                "Resterend": remaining,
-                "% gebruikt": percentage
-            }
+        transaction_df = pd.DataFrame(
+            transactions
         )
 
 
-    budget_overview = pd.DataFrame(
-        budget_rows
-    )
-
-
-    # --------------------------------------------------------
-    # DISPLAY
-    # --------------------------------------------------------
-
-    for _, row in budget_overview.iterrows():
-
-        category = row["Categorie"]
-
-        budget_amount = row["Budget"]
-
-        spent = row["Uitgegeven"]
-
-        remaining = row["Resterend"]
-
-        percentage = row["% gebruikt"]
-
-
-        st.markdown(
-            f"### {category}"
+        transaction_df["date"] = pd.to_datetime(
+            transaction_df["date"],
+            errors="coerce"
         )
 
-        col1, col2, col3 = st.columns(3)
 
-        with col1:
+        valid_dates = transaction_df[
+            transaction_df["date"].notna()
+        ]
 
-            st.metric(
-                "Budget",
-                f"€ {budget_amount:,.2f}"
-            )
 
-        with col2:
+        if not valid_dates.empty:
 
-            st.metric(
-                "Uitgegeven",
-                f"€ {spent:,.2f}"
-            )
-
-        with col3:
-
-            st.metric(
-                "Resterend",
-                f"€ {remaining:,.2f}"
+            available_months = sorted(
+                valid_dates[
+                    "date"
+                ]
+                .dt.to_period("M")
+                .unique(),
+                reverse=True
             )
 
 
-        # Limiteer progress bar op 100%
-        progress = min(
-            max(
-                percentage / 100,
-                0
-            ),
-            1
-        )
+            month_labels = [
+                period.strftime("%B %Y")
+                for period in available_months
+            ]
 
-        st.progress(
-            progress
-        )
 
-        if percentage > 100:
-
-            st.error(
-                f"⚠️ Budget overschreden met "
-                f"€ {abs(remaining):,.2f}"
+            selected_month_index = st.selectbox(
+                "📅 Bekijk budget voor maand",
+                range(len(available_months)),
+                format_func=lambda x:
+                    month_labels[x]
             )
 
-        elif percentage >= 80:
 
-            st.warning(
-                f"⚠️ {percentage:.0f}% van je budget gebruikt."
+            selected_period = (
+                available_months[
+                    selected_month_index
+                ]
             )
+
+
+            selected_month_label = (
+                selected_period.strftime(
+                    "%B %Y"
+                )
+            )
+
+
+            # ------------------------------------------------
+            # FILTER MONTH
+            # ------------------------------------------------
+
+            monthly_transactions = transaction_df[
+                transaction_df["date"]
+                .dt.to_period("M")
+                == selected_period
+            ].copy()
+
+
+            monthly_expenses = monthly_transactions[
+                monthly_transactions["flow"]
+                == "Uitgave"
+            ].copy()
+
+
+            monthly_expenses[
+                "expense_amount"
+            ] = (
+                monthly_expenses["amount"]
+                .abs()
+            )
+
+
+            spending = (
+                monthly_expenses
+                .groupby("category")[
+                    "expense_amount"
+                ]
+                .sum()
+                .to_dict()
+            )
+
+
+            st.markdown(
+                f"### 🎯 Budgetten voor {selected_month_label}"
+            )
+
+
+            # ------------------------------------------------
+            # BUDGET CARDS
+            # ------------------------------------------------
+
+            for _, budget in budget_df.iterrows():
+
+                category = budget[
+                    "category"
+                ]
+
+
+                budget_amount = float(
+                    budget[
+                        "monthly_limit"
+                    ]
+                )
+
+
+                spent = float(
+                    spending.get(
+                        category,
+                        0
+                    )
+                )
+
+
+                remaining = (
+                    budget_amount
+                    - spent
+                )
+
+
+                percentage = (
+                    spent
+                    / budget_amount
+                    * 100
+                    if budget_amount > 0
+                    else 0
+                )
+
+
+                st.markdown(
+                    f"#### {category}"
+                )
+
+
+                col1, col2, col3 = st.columns(
+                    3
+                )
+
+
+                with col1:
+
+                    st.metric(
+                        "Budget",
+                        f"€ {budget_amount:,.2f}"
+                    )
+
+
+                with col2:
+
+                    st.metric(
+                        "Uitgegeven",
+                        f"€ {spent:,.2f}"
+                    )
+
+
+                with col3:
+
+                    st.metric(
+                        "Resterend",
+                        f"€ {remaining:,.2f}"
+                    )
+
+
+                progress = min(
+                    max(
+                        percentage / 100,
+                        0
+                    ),
+                    1
+                )
+
+
+                st.progress(
+                    progress
+                )
+
+
+                if percentage > 100:
+
+                    st.error(
+                        f"🔴 Budget overschreden "
+                        f"met € "
+                        f"{abs(remaining):,.2f}"
+                    )
+
+                elif percentage >= 80:
+
+                    st.warning(
+                        f"🟠 {percentage:.0f}% "
+                        f"van het budget gebruikt."
+                    )
+
+                else:
+
+                    st.success(
+                        f"🟢 {percentage:.0f}% "
+                        f"van het budget gebruikt."
+                    )
+
+
+                st.divider()
+
 
         else:
 
-            st.success(
-                f"✅ {percentage:.0f}% van je budget gebruikt."
+            st.info(
+                "Er zijn nog geen geldige transactiedatums beschikbaar."
             )
 
 
-elif budgets:
+    else:
 
-    st.info(
-        "Er zijn nog geen transacties om je budgetten mee te vergelijken."
-    )
+        st.info(
+            "Upload eerst transacties om je budgetten te kunnen vergelijken."
+        )
+
 
 else:
 
     st.info(
-        "Je hebt nog geen budgetten ingesteld."
+        "Je hebt nog geen budgetten ingesteld. "
+        "Gebruik hierboven '➕ Budget instellen' om je eerste budget toe te voegen."
     )
-
