@@ -7,7 +7,6 @@ from supabase import create_client
 # CONFIGURATIE
 # ==========================================
 
-
 st.set_page_config(
     page_title="Financial Cockpit",
     page_icon="💰",
@@ -23,14 +22,28 @@ st.markdown(
     """
 )
 
+
 # ==========================================
 # SUPABASE
 # ==========================================
 
-supabase = create_client(
-    st.secrets["SUPABASE_URL"],
-    st.secrets["SUPABASE_KEY"]
-)
+try:
+
+    supabase = create_client(
+        st.secrets["SUPABASE_URL"],
+        st.secrets["SUPABASE_KEY"]
+    )
+
+    supabase_available = True
+
+except Exception as e:
+
+    supabase_available = False
+
+    st.warning(
+        "⚠️ Supabase is niet beschikbaar. "
+        "De app werkt zonder opgeslagen categorisatieregels."
+    )
 
 
 # ==========================================
@@ -38,6 +51,7 @@ supabase = create_client(
 # ==========================================
 
 CATEGORY_RULES = {
+
     "Boodschappen": [
         "albert heijn",
         "ah ",
@@ -179,7 +193,7 @@ CATEGORIES = [
 
 
 # ==========================================
-# CATEGORISATIE
+# AUTOMATISCHE CATEGORISATIE
 # ==========================================
 
 def categorize_transaction(description):
@@ -194,6 +208,102 @@ def categorize_transaction(description):
                 return category
 
     return "Overig"
+
+
+# ==========================================
+# MERCHANT HERKENNEN
+# ==========================================
+
+def normalize_merchant(description):
+
+    description = str(description).lower().strip()
+
+    # Eerst bekende merchants proberen te herkennen
+    for keywords in CATEGORY_RULES.values():
+
+        for keyword in keywords:
+
+            if keyword in description:
+
+                return keyword.strip()
+
+    # Als merchant onbekend is:
+    # volledige omschrijving gebruiken
+    return description
+
+
+# ==========================================
+# MERCHANT RULES UIT SUPABASE OPHALEN
+# ==========================================
+
+def get_merchant_rules():
+
+    if not supabase_available:
+        return {}
+
+    try:
+
+        result = (
+            supabase
+            .table("merchant_rules")
+            .select("merchant, category")
+            .execute()
+        )
+
+        rules = {}
+
+        for row in result.data:
+
+            merchant = str(
+                row["merchant"]
+            ).lower().strip()
+
+            rules[merchant] = row["category"]
+
+        return rules
+
+    except Exception as e:
+
+        st.warning(
+            f"⚠️ Merchant rules konden niet worden geladen: {e}"
+        )
+
+        return {}
+
+
+# ==========================================
+# MERCHANT RULE OPSLAAN
+# ==========================================
+
+def save_merchant_rule(merchant, category):
+
+    if not supabase_available:
+        return False
+
+    try:
+
+        (
+            supabase
+            .table("merchant_rules")
+            .upsert(
+                {
+                    "merchant": merchant,
+                    "category": category
+                },
+                on_conflict="merchant"
+            )
+            .execute()
+        )
+
+        return True
+
+    except Exception as e:
+
+        st.error(
+            f"❌ Kon categorie niet opslaan: {e}"
+        )
+
+        return False
 
 
 # ==========================================
@@ -281,31 +391,35 @@ if uploaded_file is not None:
         date_column = None
         debit_credit_column = None
 
-        # Omschrijving zoeken
+        # Omschrijving
         for column in description_options:
 
             if column in df.columns:
+
                 description_column = column
                 break
 
-        # Bedrag zoeken
+        # Bedrag
         for column in amount_options:
 
             if column in df.columns:
+
                 amount_column = column
                 break
 
-        # Datum zoeken
+        # Datum
         for column in date_options:
 
             if column in df.columns:
+
                 date_column = column
                 break
 
-        # Debit / Credit zoeken
+        # Debit / Credit
         for column in debit_credit_options:
 
             if column in df.columns:
+
                 debit_credit_column = column
                 break
 
@@ -406,13 +520,42 @@ if uploaded_file is not None:
         )
 
         # ==================================
-        # CATEGORIE TOEVOEGEN
+        # MERCHANT HERKENNEN
         # ==================================
 
-        df["category"] = df[
+        df["merchant"] = df[
             description_column
         ].apply(
-            categorize_transaction
+            normalize_merchant
+        )
+
+        # ==================================
+        # BESTAANDE MERCHANT RULES LADEN
+        # ==================================
+
+        merchant_rules = get_merchant_rules()
+
+        # ==================================
+        # CATEGORIE BEPALEN
+        # ==================================
+
+        def determine_category(row):
+
+            merchant = row["merchant"]
+
+            # Eerst persoonlijke regel controleren
+            if merchant in merchant_rules:
+
+                return merchant_rules[merchant]
+
+            # Anders automatische categorisatie
+            return categorize_transaction(
+                row[description_column]
+            )
+
+        df["category"] = df.apply(
+            determine_category,
+            axis=1
         )
 
         # ==================================
@@ -424,7 +567,7 @@ if uploaded_file is not None:
         )
 
         # ==================================
-        # TRANSACTIES BEWERKEN
+        # TRANSACTIES
         # ==================================
 
         st.subheader("💳 Transacties")
@@ -434,11 +577,19 @@ if uploaded_file is not None:
             use_container_width=True,
             hide_index=True,
             column_config={
-                "category": st.column_config.SelectboxColumn(
-                    "Categorie",
-                    options=CATEGORIES,
-                    required=True
-                )
+
+                "category":
+                    st.column_config.SelectboxColumn(
+                        "Categorie",
+                        options=CATEGORIES,
+                        required=True
+                    ),
+
+                "merchant":
+                    st.column_config.TextColumn(
+                        "Merchant",
+                        disabled=True
+                    )
             },
             disabled=[
                 column
@@ -447,7 +598,42 @@ if uploaded_file is not None:
             ]
         )
 
-        # Gebruik de aangepaste data vanaf hier
+        # ==================================
+        # CORRECTIES OPSLAAN
+        # ==========================================
+
+        changes_saved = 0
+
+        for index, row in edited_df.iterrows():
+
+            original_category = df.loc[
+                index,
+                "category"
+            ]
+
+            new_category = row["category"]
+
+            merchant = row["merchant"]
+
+            if (
+                original_category != new_category
+                and merchant
+            ):
+
+                if save_merchant_rule(
+                    merchant,
+                    new_category
+                ):
+
+                    changes_saved += 1
+
+        if changes_saved > 0:
+
+            st.success(
+                f"✅ {changes_saved} categoriewijziging(en) opgeslagen."
+            )
+
+        # Vanaf hier werken we met de gewijzigde data
         df = edited_df
 
         # ==================================
