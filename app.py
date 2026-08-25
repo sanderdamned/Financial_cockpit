@@ -168,29 +168,44 @@ if uploaded_file is not None:
             "transactiedatum"
         ]
 
+        debit_credit_options = [
+            "debit/credit",
+            "debit credit",
+            "debit_credit",
+            "type"
+        ]
+
         description_column = None
         amount_column = None
         date_column = None
+        debit_credit_column = None
 
-        # Omschrijving zoeken
+        # Omschrijving
         for column in description_options:
 
             if column in df.columns:
                 description_column = column
                 break
 
-        # Bedrag zoeken
+        # Bedrag
         for column in amount_options:
 
             if column in df.columns:
                 amount_column = column
                 break
 
-        # Datum zoeken
+        # Datum
         for column in date_options:
 
             if column in df.columns:
                 date_column = column
+                break
+
+        # Debit / Credit
+        for column in debit_credit_options:
+
+            if column in df.columns:
+                debit_credit_column = column
                 break
 
         # ==================================
@@ -225,19 +240,34 @@ if uploaded_file is not None:
 
             st.stop()
 
+        if debit_credit_column is None:
+
+            st.error(
+                "❌ Ik kan de debit/credit kolom niet herkennen."
+            )
+
+            st.write("Kolommen gevonden:")
+
+            st.code(
+                "\n".join(df.columns)
+            )
+
+            st.stop()
+
         # ==================================
-        # DATUM NORMALISEREN
+        # DATUM VERWERKEN
         # ==================================
 
         if date_column is not None:
 
             df[date_column] = pd.to_datetime(
-                df[date_column],
+                df[date_column].astype(str),
+                format="%Y%m%d",
                 errors="coerce"
             )
 
         # ==================================
-        # BEDRAGEN NORMALISEREN
+        # BEDRAG VERWERKEN
         # ==================================
 
         df[amount_column] = (
@@ -245,11 +275,6 @@ if uploaded_file is not None:
             .astype(str)
             .str.strip()
             .str.replace("€", "", regex=False)
-        )
-
-        # Europese decimalen ondersteunen
-        df[amount_column] = (
-            df[amount_column]
             .str.replace(".", "", regex=False)
             .str.replace(",", ".", regex=False)
         )
@@ -257,6 +282,29 @@ if uploaded_file is not None:
         df[amount_column] = pd.to_numeric(
             df[amount_column],
             errors="coerce"
+        )
+
+        # ==================================
+        # DEBIT / CREDIT NORMALISEREN
+        # ==================================
+
+        df["transaction_type"] = (
+            df[debit_credit_column]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+
+        # Credit = inkomen
+        # Debit = uitgave
+
+        df["flow"] = df["transaction_type"].apply(
+            lambda x:
+                "Inkomst"
+                if x == "credit"
+                else "Uitgave"
+                if x == "debit"
+                else "Onbekend"
         )
 
         # ==================================
@@ -290,22 +338,34 @@ if uploaded_file is not None:
         )
 
         # ==================================
-        # SAMENVATTING
+        # INKOMSTEN
+        # ==================================
+
+        income = df.loc[
+            df["flow"] == "Inkomst",
+            amount_column
+        ].sum()
+
+        # ==================================
+        # UITGAVEN
+        # ==================================
+
+        expenses = df.loc[
+            df["flow"] == "Uitgave",
+            amount_column
+        ].sum()
+
+        # ==================================
+        # NETTO
+        # ==================================
+
+        balance = income - expenses
+
+        # ==================================
+        # DASHBOARD
         # ==================================
 
         st.subheader("📊 Samenvatting")
-
-        income = df.loc[
-            df[amount_column] > 0,
-            amount_column
-        ].sum()
-
-        expenses = df.loc[
-            df[amount_column] < 0,
-            amount_column
-        ].sum()
-
-        balance = income + expenses
 
         col1, col2, col3 = st.columns(3)
 
@@ -320,7 +380,7 @@ if uploaded_file is not None:
 
             st.metric(
                 "💸 Uitgaven",
-                f"€ {abs(expenses):,.2f}"
+                f"€ {expenses:,.2f}"
             )
 
         with col3:
@@ -339,14 +399,13 @@ if uploaded_file is not None:
         )
 
         expense_df = df[
-            df[amount_column] < 0
+            df["flow"] == "Uitgave"
         ].copy()
 
         category_summary = (
             expense_df
             .groupby("category")[amount_column]
             .sum()
-            .abs()
             .sort_values(
                 ascending=False
             )
@@ -372,10 +431,6 @@ if uploaded_file is not None:
                 totaal="sum"
             )
             .reset_index()
-        )
-
-        category_table["totaal"] = (
-            category_table["totaal"].abs()
         )
 
         category_table = category_table.sort_values(
