@@ -192,8 +192,18 @@ def normalize_merchant(description):
     return text
 
 
-def create_transaction_hash(date, description, amount):
-    raw = f"{date}|{description}|{amount}"
+def create_transaction_hash(
+    date,
+    description,
+    amount,
+    transaction_type
+):
+    raw = (
+        f"{date}|"
+        f"{description}|"
+        f"{amount}|"
+        f"{transaction_type}"
+    )
 
     return hashlib.sha256(
         raw.encode("utf-8")
