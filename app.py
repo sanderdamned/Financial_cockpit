@@ -1285,3 +1285,4 @@ else:
     st.info(
         "Upload transacties om je financiële overzicht te zien."
     )
+
