@@ -1,4 +1,4 @@
-
+```python
 import streamlit as st
 import pandas as pd
 import hashlib
@@ -190,7 +190,6 @@ def normalize_merchant(description):
 
     description = str(description).lower().strip()
 
-    # Try to identify a known merchant
     for keywords in CATEGORY_RULES.values():
 
         for keyword in keywords:
@@ -254,6 +253,10 @@ def show_login():
 
     st.title("💰 Financial Cockpit")
 
+    st.markdown(
+        "Log in om je persoonlijke financiële dashboard te bekijken."
+    )
+
     login_tab, register_tab = st.tabs(
         [
             "Inloggen",
@@ -261,25 +264,37 @@ def show_login():
         ]
     )
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # LOGIN
-    # --------------------------------------------------------
+    # ========================================================
 
     with login_tab:
 
         email = st.text_input(
-            "E-mailadres"
+            "E-mailadres",
+            key="login_email"
         )
 
         password = st.text_input(
             "Wachtwoord",
-            type="password"
+            type="password",
+            key="login_password"
         )
 
         if st.button(
             "Inloggen",
-            use_container_width=True
+            use_container_width=True,
+            type="primary"
         ):
+
+            if not email or not password:
+
+                st.error(
+                    "Vul je e-mailadres en wachtwoord in."
+                )
+
+                return
 
             try:
 
@@ -294,13 +309,38 @@ def show_login():
                     )
                 )
 
-                if response.user:
+                if response.user and response.session:
 
-                    st.session_state["user"] = (
-                        response.user
+                    # Bewaar de gebruiker
+                    st.session_state["user"] = response.user
+
+                    # Bewaar de Supabase tokens
+                    st.session_state["access_token"] = (
+                        response.session.access_token
+                    )
+
+                    st.session_state["refresh_token"] = (
+                        response.session.refresh_token
+                    )
+
+                    # Zorg dat de Supabase client
+                    # dezelfde authenticated session gebruikt
+                    supabase.auth.set_session(
+                        response.session.access_token,
+                        response.session.refresh_token
+                    )
+
+                    st.success(
+                        "✅ Succesvol ingelogd!"
                     )
 
                     st.rerun()
+
+                else:
+
+                    st.error(
+                        "❌ Inloggen mislukt."
+                    )
 
             except Exception as e:
 
@@ -308,9 +348,10 @@ def show_login():
                     f"❌ Inloggen mislukt: {e}"
                 )
 
-    # --------------------------------------------------------
+
+    # ========================================================
     # REGISTER
-    # --------------------------------------------------------
+    # ========================================================
 
     with register_tab:
 
@@ -335,6 +376,14 @@ def show_login():
             "Account aanmaken",
             use_container_width=True
         ):
+
+            if not email:
+
+                st.error(
+                    "Vul een e-mailadres in."
+                )
+
+                return
 
             if password != password_repeat:
 
@@ -383,12 +432,53 @@ def show_login():
 
 
 # ============================================================
-# LOGIN CHECK
+# AUTHENTICATION CHECK
 # ============================================================
 
 if "user" not in st.session_state:
 
     show_login()
+
+    st.stop()
+
+
+# ============================================================
+# RESTORE SUPABASE SESSION
+# ============================================================
+
+if (
+    "access_token" not in st.session_state
+    or "refresh_token" not in st.session_state
+):
+
+    st.warning(
+        "Je sessie is verlopen. Log opnieuw in."
+    )
+
+    if st.button("Opnieuw inloggen"):
+
+        st.session_state.clear()
+
+        st.rerun()
+
+    st.stop()
+
+
+try:
+
+    supabase.auth.set_session(
+        st.session_state["access_token"],
+        st.session_state["refresh_token"]
+    )
+
+except Exception as e:
+
+    st.error(
+        "Je sessie kon niet worden hersteld. "
+        "Log opnieuw in."
+    )
+
+    st.session_state.clear()
 
     st.stop()
 
@@ -406,9 +496,11 @@ header_col1, header_col2 = st.columns(
     [5, 1]
 )
 
+
 with header_col1:
 
     st.title("💰 Financial Cockpit")
+
 
 with header_col2:
 
@@ -416,12 +508,15 @@ with header_col2:
         "Uitloggen"
     ):
 
-        supabase.auth.sign_out()
+        try:
 
-        st.session_state.pop(
-            "user",
-            None
-        )
+            supabase.auth.sign_out()
+
+        except Exception:
+
+            pass
+
+        st.session_state.clear()
 
         st.rerun()
 
@@ -448,7 +543,7 @@ try:
         .execute()
     )
 
-    accounts = accounts_result.data
+    accounts = accounts_result.data or []
 
 except Exception as e:
 
@@ -460,27 +555,24 @@ except Exception as e:
 
 
 # ============================================================
-# NO ACCOUNT YET
+# ADD ACCOUNT
 # ============================================================
 
-if not accounts:
-
-    st.info(
-        "Je hebt nog geen bankrekening toegevoegd."
-    )
-
-    st.markdown(
-        "### Voeg je eerste rekening toe"
-    )
+with st.expander(
+    "➕ Bankrekening toevoegen",
+    expanded=len(accounts) == 0
+):
 
     account_name = st.text_input(
         "Naam rekening",
-        placeholder="ING Betaalrekening"
+        placeholder="ING Betaalrekening",
+        key="account_name"
     )
 
     bank_name = st.text_input(
         "Bank",
-        placeholder="ING"
+        placeholder="ING",
+        key="bank_name"
     )
 
     account_type = st.selectbox(
@@ -491,8 +583,10 @@ if not accounts:
             "Creditcard",
             "Beleggingsrekening",
             "Anders"
-        ]
+        ],
+        key="account_type"
     )
+
 
     if st.button(
         "🏦 Rekening toevoegen",
@@ -500,7 +594,7 @@ if not accounts:
         use_container_width=True
     ):
 
-        if not account_name:
+        if not account_name.strip():
 
             st.error(
                 "Vul een naam voor de rekening in."
@@ -508,19 +602,19 @@ if not accounts:
 
         else:
 
+            account_data = {
+                "user_id": user_id,
+                "name": account_name.strip(),
+                "bank": bank_name.strip(),
+                "account_type": account_type
+            }
+
             try:
 
                 result = (
                     supabase
                     .table("accounts")
-                    .insert(
-                        {
-                            "user_id": user_id,
-                            "name": account_name,
-                            "bank": bank_name,
-                            "account_type": account_type
-                        }
-                    )
+                    .insert(account_data)
                     .execute()
                 )
 
@@ -532,11 +626,28 @@ if not accounts:
 
                     st.rerun()
 
+                else:
+
+                    st.warning(
+                        "De rekening werd niet toegevoegd."
+                    )
+
             except Exception as e:
 
                 st.error(
                     f"❌ Rekening kon niet worden toegevoegd: {e}"
                 )
+
+
+# ============================================================
+# STOP IF NO ACCOUNTS
+# ============================================================
+
+if not accounts:
+
+    st.info(
+        "Voeg eerst een bankrekening toe voordat je transacties importeert."
+    )
 
     st.stop()
 
@@ -544,6 +655,8 @@ if not accounts:
 # ============================================================
 # ACCOUNT SELECTOR
 # ============================================================
+
+st.divider()
 
 account_names = {
     account["name"]: account["id"]
@@ -581,9 +694,9 @@ if uploaded_file is not None:
 
     try:
 
-        # ----------------------------------------------------
+        # ====================================================
         # READ CSV
-        # ----------------------------------------------------
+        # ====================================================
 
         df = pd.read_csv(
             uploaded_file,
@@ -591,9 +704,10 @@ if uploaded_file is not None:
             engine="python"
         )
 
-        # ----------------------------------------------------
+
+        # ====================================================
         # CLEAN COLUMN NAMES
-        # ----------------------------------------------------
+        # ====================================================
 
         df.columns = (
             df.columns
@@ -607,9 +721,10 @@ if uploaded_file is not None:
             how="all"
         )
 
-        # ----------------------------------------------------
+
+        # ====================================================
         # POSSIBLE COLUMN NAMES
-        # ----------------------------------------------------
+        # ====================================================
 
         description_options = [
             "description",
@@ -647,9 +762,10 @@ if uploaded_file is not None:
             "type"
         ]
 
-        # ----------------------------------------------------
+
+        # ====================================================
         # FIND COLUMNS
-        # ----------------------------------------------------
+        # ====================================================
 
         description_column = next(
             (
@@ -687,9 +803,10 @@ if uploaded_file is not None:
             None
         )
 
-        # ----------------------------------------------------
+
+        # ====================================================
         # VALIDATION
-        # ----------------------------------------------------
+        # ====================================================
 
         if description_column is None:
 
@@ -743,22 +860,26 @@ if uploaded_file is not None:
             st.stop()
 
 
-        # ----------------------------------------------------
+        # ====================================================
         # DATE
-        # ----------------------------------------------------
+        # ====================================================
 
-        df[date_column] = pd.to_datetime(
+        raw_dates = (
             df[date_column]
             .astype(str)
-            .str.strip(),
+            .str.strip()
+        )
+
+        df[date_column] = pd.to_datetime(
+            raw_dates,
             format="%Y%m%d",
             errors="coerce"
         )
 
 
-        # ----------------------------------------------------
+        # ====================================================
         # AMOUNT
-        # ----------------------------------------------------
+        # ====================================================
 
         df[amount_column] = (
             df[amount_column]
@@ -787,9 +908,29 @@ if uploaded_file is not None:
         )
 
 
-        # ----------------------------------------------------
+        # ====================================================
+        # REMOVE INVALID ROWS
+        # ====================================================
+
+        invalid_dates = df[date_column].isna().sum()
+        invalid_amounts = df[amount_column].isna().sum()
+
+        if invalid_dates > 0:
+
+            st.warning(
+                f"⚠️ {invalid_dates} transacties hebben een ongeldige datum."
+            )
+
+        if invalid_amounts > 0:
+
+            st.warning(
+                f"⚠️ {invalid_amounts} transacties hebben een ongeldig bedrag."
+            )
+
+
+        # ====================================================
         # DEBIT / CREDIT
-        # ----------------------------------------------------
+        # ====================================================
 
         df["transaction_type"] = (
             df[debit_credit_column]
@@ -813,9 +954,9 @@ if uploaded_file is not None:
         )
 
 
-        # ----------------------------------------------------
+        # ====================================================
         # MERCHANT
-        # ----------------------------------------------------
+        # ====================================================
 
         df["merchant"] = df[
             description_column
@@ -824,9 +965,9 @@ if uploaded_file is not None:
         )
 
 
-        # ----------------------------------------------------
+        # ====================================================
         # CATEGORY
-        # ----------------------------------------------------
+        # ====================================================
 
         df["category"] = df[
             description_column
@@ -835,9 +976,9 @@ if uploaded_file is not None:
         )
 
 
-        # ----------------------------------------------------
+        # ====================================================
         # TRANSACTION HASH
-        # ----------------------------------------------------
+        # ====================================================
 
         df["transaction_hash"] = df.apply(
             lambda row:
@@ -850,13 +991,14 @@ if uploaded_file is not None:
         )
 
 
-        # ----------------------------------------------------
+        # ====================================================
         # PREVIEW
-        # ----------------------------------------------------
+        # ====================================================
 
         st.success(
             f"✅ {len(df):,} transacties gevonden"
         )
+
 
         preview_columns = [
             date_column,
@@ -867,6 +1009,7 @@ if uploaded_file is not None:
             "category"
         ]
 
+
         st.dataframe(
             df[preview_columns],
             use_container_width=True,
@@ -874,9 +1017,9 @@ if uploaded_file is not None:
         )
 
 
-        # ----------------------------------------------------
-        # SAVE
-        # ----------------------------------------------------
+        # ====================================================
+        # SAVE TRANSACTIONS
+        # ====================================================
 
         if st.button(
             "💾 Transacties opslaan",
@@ -886,21 +1029,31 @@ if uploaded_file is not None:
 
             transactions_to_insert = []
 
+
             for _, row in df.iterrows():
 
-                transaction_date = None
-
-                if pd.notna(
+                if pd.isna(
                     row[date_column]
                 ):
 
-                    transaction_date = (
-                        row[date_column].date()
-                    )
+                    continue
+
+                if pd.isna(
+                    row[amount_column]
+                ):
+
+                    continue
+
+
+                transaction_date = (
+                    row[date_column].date()
+                )
+
 
                 transactions_to_insert.append(
                     {
-                        "user_id": user_id,
+                        "user_id":
+                            user_id,
 
                         "account_id":
                             selected_account_id,
@@ -946,39 +1099,42 @@ if uploaded_file is not None:
                 )
 
 
-            try:
-
-                result = (
-                    supabase
-                    .table("transactions")
-                    .upsert(
-                        transactions_to_insert,
-                        on_conflict=(
-                            "user_id,"
-                            "transaction_hash"
-                        )
-                    )
-                    .execute()
-                )
-
-                st.success(
-                    f"✅ {len(result.data)} transacties verwerkt."
-                )
-
-                st.rerun()
-
-            except Exception as e:
+            if not transactions_to_insert:
 
                 st.error(
-                    f"❌ Transacties konden niet worden opgeslagen: {e}"
+                    "❌ Er zijn geen geldige transacties om op te slaan."
                 )
 
+            else:
 
-    except Exception as e:
+                try:
 
-        st.error(
-            f"❌ Het CSV-bestand kon niet worden verwerkt: {e}"
-        )
+                    result = (
+                        supabase
+                        .table("transactions")
+                        .upsert(
+                            transactions_to_insert,
+                            on_conflict=(
+                                "user_id,"
+                                "transaction_hash"
+                            )
+                        )
+                        .execute()
+                    )
+
+
+                    st.success(
+                        f"✅ {len(result.data)} transacties verwerkt."
+                    )
+
+                    st.rerun()
+
+
+                except Exception as e:
+
+                    st.error(
+                        f"❌ Transacties konden niet worden opgeslagen: {e}"
+                    )
 
 
 # ============================================================
@@ -1002,6 +1158,7 @@ if transactions:
         transactions
     )
 
+
     display_columns = [
         "date",
         "description",
@@ -1011,11 +1168,13 @@ if transactions:
         "category"
     ]
 
+
     available_columns = [
         column
         for column in display_columns
         if column in transactions_df.columns
     ]
+
 
     st.dataframe(
         transactions_df[
@@ -1048,19 +1207,24 @@ if transactions:
         transactions
     )
 
+
     income = dashboard_df.loc[
         dashboard_df["flow"] == "Inkomst",
         "amount"
     ].sum()
+
 
     expenses = dashboard_df.loc[
         dashboard_df["flow"] == "Uitgave",
         "amount"
     ].sum()
 
+
     balance = income - expenses
 
+
     col1, col2, col3 = st.columns(3)
+
 
     with col1:
 
@@ -1069,12 +1233,14 @@ if transactions:
             f"€ {income:,.2f}"
         )
 
+
     with col2:
 
         st.metric(
             "💸 Uitgaven",
             f"€ {expenses:,.2f}"
         )
+
 
     with col3:
 
@@ -1084,17 +1250,19 @@ if transactions:
         )
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # EXPENSES BY CATEGORY
-    # --------------------------------------------------------
+    # ========================================================
 
     st.subheader(
         "💸 Uitgaven per categorie"
     )
 
+
     expense_df = dashboard_df[
         dashboard_df["flow"] == "Uitgave"
     ].copy()
+
 
     if not expense_df.empty:
 
@@ -1107,12 +1275,15 @@ if transactions:
             )
         )
 
+
         st.bar_chart(
             category_summary
         )
+
 
 else:
 
     st.info(
         "Upload transacties om je financiële overzicht te zien."
     )
+```
