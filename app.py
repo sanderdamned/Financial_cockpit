@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import hashlib
@@ -2492,4 +2491,3 @@ st.divider()
 st.caption(
     "Financial Cockpit · Persoonlijk financieel overzicht"
 )
-```
