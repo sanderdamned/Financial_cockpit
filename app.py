@@ -22,7 +22,6 @@ st.set_page_config(
 
 @st.cache_resource
 def get_supabase():
-
     return create_client(
         st.secrets["SUPABASE_URL"],
         st.secrets["SUPABASE_KEY"]
@@ -225,8 +224,16 @@ def create_transaction_hash(
     ).hexdigest()
 
 
+def euro(value):
+
+    try:
+        return f"€ {float(value):,.2f}"
+    except Exception:
+        return "€ 0.00"
+
+
 # ============================================================
-# DATABASE FUNCTIONS
+# DATABASE - ACCOUNTS
 # ============================================================
 
 def load_accounts(user_id):
@@ -252,6 +259,10 @@ def load_accounts(user_id):
 
         return []
 
+
+# ============================================================
+# DATABASE - TRANSACTIONS
+# ============================================================
 
 def load_transactions(
     user_id,
@@ -280,6 +291,10 @@ def load_transactions(
 
         return []
 
+
+# ============================================================
+# DATABASE - BUDGETS
+# ============================================================
 
 def load_budgets(user_id):
 
@@ -320,7 +335,9 @@ def save_budget(
                 {
                     "user_id": user_id,
                     "category": category,
-                    "monthly_limit": float(monthly_limit)
+                    "monthly_limit": float(
+                        monthly_limit
+                    )
                 },
                 on_conflict="user_id,category"
             )
@@ -339,7 +356,7 @@ def save_budget(
 
 
 # ============================================================
-# RECURRING TRANSACTIONS
+# DATABASE - RECURRING
 # ============================================================
 
 def load_recurring_transactions(
@@ -371,194 +388,6 @@ def load_recurring_transactions(
         return []
 
 
-def detect_recurring_transactions(
-    transactions
-):
-
-    if not transactions:
-        return []
-
-    df = pd.DataFrame(transactions)
-
-    if df.empty:
-        return []
-
-    required_columns = [
-        "date",
-        "merchant",
-        "amount",
-        "flow"
-    ]
-
-    for column in required_columns:
-
-        if column not in df.columns:
-            return []
-
-    df = df.copy()
-
-    df["date"] = pd.to_datetime(
-        df["date"],
-        errors="coerce"
-    )
-
-    df["amount"] = pd.to_numeric(
-        df["amount"],
-        errors="coerce"
-    )
-
-    df["merchant"] = (
-        df["merchant"]
-        .astype(str)
-        .str.strip()
-        .str.lower()
-    )
-
-    df = df[
-        df["date"].notna()
-        & df["amount"].notna()
-        & df["merchant"].notna()
-        & (df["merchant"] != "")
-    ].copy()
-
-    if df.empty:
-        return []
-
-    df = df[
-        df["flow"] == "Uitgave"
-    ].copy()
-
-    if df.empty:
-        return []
-
-    df["amount_abs"] = df["amount"].abs()
-
-    recurring = []
-
-    for merchant, group in df.groupby("merchant"):
-
-        if len(group) < 2:
-            continue
-
-        group = group.sort_values("date").copy()
-
-        dates = list(group["date"])
-        amounts = list(group["amount_abs"])
-
-        intervals = []
-
-        for i in range(1, len(dates)):
-
-            days = (
-                dates[i] - dates[i - 1]
-            ).days
-
-            if days > 0:
-                intervals.append(days)
-
-        if not intervals:
-            continue
-
-        average_interval = (
-            sum(intervals) / len(intervals)
-        )
-
-        if 25 <= average_interval <= 35:
-
-            frequency = "Maandelijks"
-
-        elif 6 <= average_interval <= 8:
-
-            frequency = "Wekelijks"
-
-        elif 80 <= average_interval <= 100:
-
-            frequency = "Per kwartaal"
-
-        elif 350 <= average_interval <= 380:
-
-            frequency = "Jaarlijks"
-
-        else:
-
-            continue
-
-        average_amount = (
-            sum(amounts) / len(amounts)
-        )
-
-        if average_amount == 0:
-            continue
-
-        max_difference = max(
-            abs(amount - average_amount)
-            for amount in amounts
-        )
-
-        percentage_difference = (
-            max_difference / average_amount
-        )
-
-        if percentage_difference <= 0.15:
-
-            reliability = "Hoog"
-
-        elif percentage_difference <= 0.30:
-
-            reliability = "Gemiddeld"
-
-        else:
-
-            continue
-
-        category = "Overig"
-
-        if "category" in group.columns:
-
-            categories = (
-                group["category"]
-                .dropna()
-                .astype(str)
-            )
-
-            if not categories.empty:
-
-                category = (
-                    categories
-                    .mode()
-                    .iloc[0]
-                )
-
-        last_date = dates[-1]
-
-        next_date = (
-            last_date
-            + pd.Timedelta(
-                days=round(average_interval)
-            )
-        )
-
-        recurring.append(
-            {
-                "merchant": merchant,
-                "category": category,
-                "frequency": frequency,
-                "expected_amount": round(
-                    average_amount,
-                    2
-                ),
-                "occurrences": len(group),
-                "last_occurrence":
-                    last_date.strftime("%Y-%m-%d"),
-                "next_occurrence":
-                    next_date.strftime("%Y-%m-%d"),
-                "reliability": reliability
-            }
-        )
-
-    return recurring
-
-
 def save_recurring_transactions(
     user_id,
     account_id,
@@ -582,10 +411,12 @@ def save_recurring_transactions(
                 "expected_amount": float(
                     recurring["expected_amount"]
                 ),
-                "last_occurrence":
-                    recurring["last_occurrence"],
-                "next_occurrence":
-                    recurring["next_occurrence"],
+                "last_occurrence": recurring[
+                    "last_occurrence"
+                ],
+                "next_occurrence": recurring[
+                    "next_occurrence"
+                ],
                 "active": True
             }
         )
@@ -673,7 +504,7 @@ def delete_recurring_transaction(
     except Exception as e:
 
         st.error(
-            f"❌ Terugkerende transactie kon "
+            "❌ Terugkerende transactie kon "
             f"niet worden verwijderd: {e}"
         )
 
@@ -681,61 +512,36 @@ def delete_recurring_transaction(
 
 
 # ============================================================
-# FORECAST FUNCTIONS
+# RECURRING DETECTION
 # ============================================================
 
-def monthly_recurring_cost(
-    recurring_transactions
+def detect_recurring_transactions(
+    transactions
 ):
 
-    total = 0.0
+    if not transactions:
+        return []
 
-    for item in recurring_transactions:
+    df = pd.DataFrame(
+        transactions
+    )
 
-        if not item.get("active", True):
-            continue
+    if df.empty:
+        return []
 
-        amount = float(
-            item.get(
-                "expected_amount",
-                0
-            ) or 0
-        )
+    required_columns = [
+        "date",
+        "merchant",
+        "amount",
+        "flow"
+    ]
 
-        frequency = item.get(
-            "frequency",
-            ""
-        )
+    for column in required_columns:
 
-        if frequency == "Wekelijks":
+        if column not in df.columns:
+            return []
 
-            total += amount * 52 / 12
-
-        elif frequency == "Maandelijks":
-
-            total += amount
-
-        elif frequency == "Per kwartaal":
-
-            total += amount / 3
-
-        elif frequency == "Jaarlijks":
-
-            total += amount / 12
-
-    return total
-
-
-def calculate_forecast(
-    transactions_df,
-    selected_period,
-    recurring_transactions
-):
-
-    if transactions_df.empty:
-        return None
-
-    df = transactions_df.copy()
+    df = df.copy()
 
     df["date"] = pd.to_datetime(
         df["date"],
@@ -747,87 +553,353 @@ def calculate_forecast(
         errors="coerce"
     )
 
-    df = df[df["date"].notna()].copy()
+    df["merchant"] = (
+        df["merchant"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    df = df[
+        df["date"].notna()
+        & df["amount"].notna()
+        & df["merchant"].notna()
+        & (df["merchant"] != "")
+    ].copy()
+
+    if df.empty:
+        return []
+
+    df = df[
+        df["flow"] == "Uitgave"
+    ].copy()
+
+    if df.empty:
+        return []
+
+    df["amount_abs"] = (
+        df["amount"].abs()
+    )
+
+    recurring = []
+
+    for merchant, group in df.groupby(
+        "merchant"
+    ):
+
+        if len(group) < 2:
+            continue
+
+        group = group.sort_values(
+            "date"
+        ).copy()
+
+        dates = list(
+            group["date"]
+        )
+
+        amounts = list(
+            group["amount_abs"]
+        )
+
+        intervals = []
+
+        for i in range(
+            1,
+            len(dates)
+        ):
+
+            days = (
+                dates[i]
+                - dates[i - 1]
+            ).days
+
+            if days > 0:
+                intervals.append(days)
+
+        if not intervals:
+            continue
+
+        average_interval = (
+            sum(intervals)
+            / len(intervals)
+        )
+
+        if 25 <= average_interval <= 35:
+
+            frequency = "Maandelijks"
+
+        elif 6 <= average_interval <= 8:
+
+            frequency = "Wekelijks"
+
+        elif 80 <= average_interval <= 100:
+
+            frequency = "Per kwartaal"
+
+        elif 350 <= average_interval <= 380:
+
+            frequency = "Jaarlijks"
+
+        else:
+
+            continue
+
+        average_amount = (
+            sum(amounts)
+            / len(amounts)
+        )
+
+        if average_amount == 0:
+            continue
+
+        max_difference = max(
+            abs(
+                amount - average_amount
+            )
+            for amount in amounts
+        )
+
+        percentage_difference = (
+            max_difference
+            / average_amount
+        )
+
+        if percentage_difference <= 0.15:
+
+            reliability = "Hoog"
+
+        elif percentage_difference <= 0.30:
+
+            reliability = "Gemiddeld"
+
+        else:
+
+            continue
+
+        category = "Overig"
+
+        if "category" in group.columns:
+
+            categories = (
+                group["category"]
+                .dropna()
+                .astype(str)
+            )
+
+            if not categories.empty:
+
+                category = (
+                    categories
+                    .mode()
+                    .iloc[0]
+                )
+
+        last_date = dates[-1]
+
+        next_date = (
+            last_date
+            + pd.Timedelta(
+                days=round(
+                    average_interval
+                )
+            )
+        )
+
+        recurring.append(
+            {
+                "merchant": merchant,
+                "category": category,
+                "frequency": frequency,
+                "expected_amount": round(
+                    average_amount,
+                    2
+                ),
+                "occurrences": len(group),
+                "last_occurrence":
+                    last_date.strftime(
+                        "%Y-%m-%d"
+                    ),
+                "next_occurrence":
+                    next_date.strftime(
+                        "%Y-%m-%d"
+                    ),
+                "reliability":
+                    reliability
+            }
+        )
+
+    return recurring
+
+
+# ============================================================
+# MONTHLY DATA
+# ============================================================
+
+def prepare_transaction_dataframe(
+    transactions
+):
+
+    if not transactions:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(
+        transactions
+    )
+
+    if df.empty:
+        return df
+
+    if "date" in df.columns:
+
+        df["date"] = pd.to_datetime(
+            df["date"],
+            errors="coerce"
+        )
+
+    if "amount" in df.columns:
+
+        df["amount"] = pd.to_numeric(
+            df["amount"],
+            errors="coerce"
+        )
+
+    df = df[
+        df["date"].notna()
+        & df["amount"].notna()
+    ].copy()
+
+    return df
+
+
+def calculate_monthly_metrics(
+    df,
+    period
+):
+
+    if df.empty:
+        return {
+            "income": 0,
+            "expenses": 0,
+            "net": 0
+        }
+
+    month_df = df[
+        df["date"].dt.to_period("M")
+        == period
+    ].copy()
+
+    income = month_df.loc[
+        month_df["flow"] == "Inkomst",
+        "amount"
+    ].sum()
+
+    expenses = month_df.loc[
+        month_df["flow"] == "Uitgave",
+        "amount"
+    ].abs().sum()
+
+    return {
+        "income": float(income),
+        "expenses": float(expenses),
+        "net": float(
+            income - expenses
+        )
+    }
+
+
+# ============================================================
+# FORECAST
+# ============================================================
+
+def calculate_month_forecast(
+    df,
+    selected_period,
+    active_recurring
+):
 
     if df.empty:
         return None
 
-    monthly = (
-        df
-        .groupby(
-            df["date"].dt.to_period("M")
-        )
-        .apply(
-            lambda x: pd.Series(
-                {
-                    "income": x.loc[
-                        x["flow"] == "Inkomst",
-                        "amount"
-                    ].sum(),
+    month_df = df[
+        df["date"].dt.to_period("M")
+        == selected_period
+    ].copy()
 
-                    "expenses": x.loc[
-                        x["flow"] == "Uitgave",
-                        "amount"
-                    ].abs().sum()
-                }
-            )
-        )
-    )
-
-    if monthly.empty:
+    if month_df.empty:
         return None
-
-    current = selected_period
-
-    current_month = df[
-        df["date"].dt.to_period("M") == current
-    ]
-
-    income_current = current_month.loc[
-        current_month["flow"] == "Inkomst",
-        "amount"
-    ].sum()
-
-    expenses_current = current_month.loc[
-        current_month["flow"] == "Uitgave",
-        "amount"
-    ].abs().sum()
 
     today = pd.Timestamp.today()
 
-    if current == today.to_period("M"):
+    if selected_period != today.to_period("M"):
+        return None
 
-        days_in_month = today.days_in_month
+    days_elapsed = today.day
 
-        elapsed_days = max(
-            today.day,
-            1
-        )
-
-        projected_expenses = (
-            expenses_current
-            / elapsed_days
-            * days_in_month
-        )
-
-        projected_income = (
-            income_current
-            if income_current > 0
-            else 0
-        )
-
-    else:
-
-        projected_expenses = expenses_current
-        projected_income = income_current
-
-    recurring_monthly = monthly_recurring_cost(
-        recurring_transactions
+    days_in_month = (
+        today.days_in_month
     )
 
-    projected_expenses = max(
-        projected_expenses,
-        recurring_monthly
+    expenses_so_far = month_df.loc[
+        month_df["flow"] == "Uitgave",
+        "amount"
+    ].abs().sum()
+
+    income_so_far = month_df.loc[
+        month_df["flow"] == "Inkomst",
+        "amount"
+    ].sum()
+
+    if days_elapsed <= 0:
+        return None
+
+    projected_expenses = (
+        expenses_so_far
+        / days_elapsed
+        * days_in_month
+    )
+
+    projected_income = (
+        income_so_far
+        / days_elapsed
+        * days_in_month
+    )
+
+    recurring_remaining = 0
+
+    for item in active_recurring:
+
+        next_occurrence = item.get(
+            "next_occurrence"
+        )
+
+        if not next_occurrence:
+            continue
+
+        try:
+
+            next_date = pd.Timestamp(
+                next_occurrence
+            )
+
+            if (
+                next_date.to_period("M")
+                == selected_period
+                and next_date >= today
+            ):
+
+                recurring_remaining += float(
+                    item.get(
+                        "expected_amount",
+                        0
+                    ) or 0
+                )
+
+        except Exception:
+            pass
+
+    projected_expenses += (
+        recurring_remaining
     )
 
     projected_net = (
@@ -836,277 +908,25 @@ def calculate_forecast(
     )
 
     return {
-        "income": projected_income,
-        "expenses": projected_expenses,
-        "net": projected_net,
-        "recurring": recurring_monthly
+        "income_so_far": float(
+            income_so_far
+        ),
+        "expenses_so_far": float(
+            expenses_so_far
+        ),
+        "projected_income": float(
+            projected_income
+        ),
+        "projected_expenses": float(
+            projected_expenses
+        ),
+        "projected_net": float(
+            projected_net
+        ),
+        "recurring_remaining": float(
+            recurring_remaining
+        )
     }
-
-
-# ============================================================
-# CSV IMPORT
-# ============================================================
-
-def parse_csv(uploaded_file):
-
-    df = pd.read_csv(
-        uploaded_file,
-        sep=None,
-        engine="python"
-    )
-
-    df.columns = (
-        df.columns
-        .astype(str)
-        .str.strip()
-        .str.lower()
-    )
-
-    df = df.dropna(
-        axis=1,
-        how="all"
-    )
-
-    description_options = [
-        "description",
-        "omschrijving",
-        "beschrijving",
-        "name / description",
-        "name",
-        "naam",
-        "details",
-        "merchant",
-        "transaction",
-        "transactie"
-    ]
-
-    amount_options = [
-        "amount",
-        "amount (eur)",
-        "amount (euro)",
-        "bedrag",
-        "waarde",
-        "transactiebedrag"
-    ]
-
-    date_options = [
-        "date",
-        "datum",
-        "transaction date",
-        "transactiedatum"
-    ]
-
-    debit_credit_options = [
-        "debit/credit",
-        "debit credit",
-        "debit_credit",
-        "type"
-    ]
-
-    description_column = next(
-        (
-            column
-            for column in description_options
-            if column in df.columns
-        ),
-        None
-    )
-
-    amount_column = next(
-        (
-            column
-            for column in amount_options
-            if column in df.columns
-        ),
-        None
-    )
-
-    date_column = next(
-        (
-            column
-            for column in date_options
-            if column in df.columns
-        ),
-        None
-    )
-
-    debit_credit_column = next(
-        (
-            column
-            for column in debit_credit_options
-            if column in df.columns
-        ),
-        None
-    )
-
-    missing = []
-
-    if description_column is None:
-        missing.append("omschrijving")
-
-    if amount_column is None:
-        missing.append("bedrag")
-
-    if date_column is None:
-        missing.append("datum")
-
-    if debit_credit_column is None:
-        missing.append("debit/credit")
-
-    if missing:
-
-        raise ValueError(
-            "Deze kolommen konden niet worden gevonden: "
-            + ", ".join(missing)
-            + "\n\nGevonden kolommen:\n"
-            + ", ".join(df.columns)
-        )
-
-    # DATE
-
-    raw_dates = (
-        df[date_column]
-        .astype(str)
-        .str.strip()
-    )
-
-    parsed_dates = pd.to_datetime(
-        raw_dates,
-        format="%Y%m%d",
-        errors="coerce"
-    )
-
-    fallback_dates = pd.to_datetime(
-        raw_dates,
-        errors="coerce",
-        dayfirst=True
-    )
-
-    df[date_column] = parsed_dates.fillna(
-        fallback_dates
-    )
-
-    # AMOUNT
-
-    amount_text = (
-        df[amount_column]
-        .astype(str)
-        .str.strip()
-        .str.replace(
-            "€",
-            "",
-            regex=False
-        )
-        .str.replace(
-            " ",
-            "",
-            regex=False
-        )
-    )
-
-    # European format:
-    # 1.234,56 -> 1234.56
-
-    amount_text = (
-        amount_text
-        .str.replace(
-            ".",
-            "",
-            regex=False
-        )
-        .str.replace(
-            ",",
-            ".",
-            regex=False
-        )
-    )
-
-    df[amount_column] = pd.to_numeric(
-        amount_text,
-        errors="coerce"
-    )
-
-    # FLOW
-
-    df["transaction_type"] = (
-        df[debit_credit_column]
-        .astype(str)
-        .str.strip()
-        .str.lower()
-    )
-
-    df["flow"] = df[
-        "transaction_type"
-    ].apply(
-        lambda x:
-            "Inkomst"
-            if x in [
-                "credit",
-                "cr",
-                "c",
-                "income"
-            ]
-            else
-            "Uitgave"
-            if x in [
-                "debit",
-                "dr",
-                "d",
-                "expense"
-            ]
-            else
-            "Onbekend"
-    )
-
-    # MERCHANT
-
-    df["merchant"] = df[
-        description_column
-    ].apply(
-        normalize_merchant
-    )
-
-    # CATEGORY
-
-    df["category"] = df[
-        description_column
-    ].apply(
-        categorize_transaction
-    )
-
-    # HASH
-
-    df["transaction_hash"] = df.apply(
-        lambda row:
-            create_transaction_hash(
-                row[date_column],
-                row[description_column],
-                row[amount_column],
-                row["transaction_type"]
-            ),
-        axis=1
-    )
-
-    # REMOVE DUPLICATES
-
-    df = df.drop_duplicates(
-        subset=["transaction_hash"],
-        keep="first"
-    )
-
-    # REMOVE INVALID
-
-    df = df[
-        df[date_column].notna()
-        & df[amount_column].notna()
-    ].copy()
-
-    return (
-        df,
-        date_column,
-        description_column,
-        amount_column
-    )
 
 
 # ============================================================
@@ -1175,16 +995,22 @@ def show_login():
                     and response.session
                 ):
 
-                    st.session_state["user"] = (
-                        response.user
+                    st.session_state[
+                        "user"
+                    ] = response.user
+
+                    st.session_state[
+                        "access_token"
+                    ] = (
+                        response.session
+                        .access_token
                     )
 
-                    st.session_state["access_token"] = (
-                        response.session.access_token
-                    )
-
-                    st.session_state["refresh_token"] = (
-                        response.session.refresh_token
+                    st.session_state[
+                        "refresh_token"
+                    ] = (
+                        response.session
+                        .refresh_token
                     )
 
                     supabase.auth.set_session(
@@ -1295,6 +1121,10 @@ if "user" not in st.session_state:
     st.stop()
 
 
+# ============================================================
+# RESTORE SESSION
+# ============================================================
+
 if (
     "access_token" not in st.session_state
     or
@@ -1319,8 +1149,12 @@ if (
 try:
 
     supabase.auth.set_session(
-        st.session_state["access_token"],
-        st.session_state["refresh_token"]
+        st.session_state[
+            "access_token"
+        ],
+        st.session_state[
+            "refresh_token"
+        ]
     )
 
 except Exception:
@@ -1334,7 +1168,9 @@ except Exception:
     st.stop()
 
 
-user = st.session_state["user"]
+user = st.session_state[
+    "user"
+]
 
 user_id = user.id
 
@@ -1452,8 +1288,8 @@ with st.expander(
             except Exception as e:
 
                 st.error(
-                    "❌ Rekening kon niet worden toegevoegd: "
-                    f"{e}"
+                    "❌ Rekening kon niet worden "
+                    f"toegevoegd: {e}"
                 )
 
 
@@ -1506,17 +1342,314 @@ if uploaded_file is not None:
 
     try:
 
-        (
-            df,
-            date_column,
-            description_column,
-            amount_column
-        ) = parse_csv(
-            uploaded_file
+        df = pd.read_csv(
+            uploaded_file,
+            sep=None,
+            engine="python"
         )
 
+        df.columns = (
+            df.columns
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+
+        df = df.dropna(
+            axis=1,
+            how="all"
+        )
+
+        description_options = [
+            "description",
+            "omschrijving",
+            "beschrijving",
+            "name / description",
+            "name",
+            "naam",
+            "details",
+            "merchant",
+            "transaction",
+            "transactie"
+        ]
+
+        amount_options = [
+            "amount",
+            "amount (eur)",
+            "amount (euro)",
+            "bedrag",
+            "waarde",
+            "transactiebedrag"
+        ]
+
+        date_options = [
+            "date",
+            "datum",
+            "transaction date",
+            "transactiedatum"
+        ]
+
+        debit_credit_options = [
+            "debit/credit",
+            "debit credit",
+            "debit_credit",
+            "type"
+        ]
+
+        description_column = next(
+            (
+                column
+                for column in description_options
+                if column in df.columns
+            ),
+            None
+        )
+
+        amount_column = next(
+            (
+                column
+                for column in amount_options
+                if column in df.columns
+            ),
+            None
+        )
+
+        date_column = next(
+            (
+                column
+                for column in date_options
+                if column in df.columns
+            ),
+            None
+        )
+
+        debit_credit_column = next(
+            (
+                column
+                for column in debit_credit_options
+                if column in df.columns
+            ),
+            None
+        )
+
+        if description_column is None:
+
+            st.error(
+                "❌ Omschrijvingskolom niet gevonden."
+            )
+
+            st.code(
+                "\n".join(df.columns)
+            )
+
+            st.stop()
+
+        if amount_column is None:
+
+            st.error(
+                "❌ Bedragkolom niet gevonden."
+            )
+
+            st.code(
+                "\n".join(df.columns)
+            )
+
+            st.stop()
+
+        if date_column is None:
+
+            st.error(
+                "❌ Datumkolom niet gevonden."
+            )
+
+            st.code(
+                "\n".join(df.columns)
+            )
+
+            st.stop()
+
+        if debit_credit_column is None:
+
+            st.error(
+                "❌ Debit/Credit kolom niet gevonden."
+            )
+
+            st.code(
+                "\n".join(df.columns)
+            )
+
+            st.stop()
+
+        # ====================================================
+        # DATE
+        # ====================================================
+
+        raw_dates = (
+            df[date_column]
+            .astype(str)
+            .str.strip()
+        )
+
+        df[date_column] = pd.to_datetime(
+            raw_dates,
+            format="%Y%m%d",
+            errors="coerce"
+        )
+
+        # fallback for other date formats
+
+        missing_dates = (
+            df[date_column].isna()
+        )
+
+        if missing_dates.any():
+
+            df.loc[
+                missing_dates,
+                date_column
+            ] = pd.to_datetime(
+                raw_dates[missing_dates],
+                errors="coerce",
+                dayfirst=True
+            )
+
+        # ====================================================
+        # AMOUNT
+        # ====================================================
+
+        amount_series = (
+            df[amount_column]
+            .astype(str)
+            .str.strip()
+            .str.replace(
+                "€",
+                "",
+                regex=False
+            )
+            .str.replace(
+                " ",
+                "",
+                regex=False
+            )
+        )
+
+        # Dutch format:
+        # 1.234,56 -> 1234.56
+
+        amount_series = (
+            amount_series
+            .str.replace(
+                ".",
+                "",
+                regex=False
+            )
+            .str.replace(
+                ",",
+                ".",
+                regex=False
+            )
+        )
+
+        df[amount_column] = pd.to_numeric(
+            amount_series,
+            errors="coerce"
+        )
+
+        # ====================================================
+        # FLOW
+        # ====================================================
+
+        df["transaction_type"] = (
+            df[debit_credit_column]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+
+        df["flow"] = df[
+            "transaction_type"
+        ].apply(
+            lambda x:
+                "Inkomst"
+                if x == "credit"
+                else
+                "Uitgave"
+                if x == "debit"
+                else
+                "Onbekend"
+        )
+
+        # ====================================================
+        # MERCHANT
+        # ====================================================
+
+        df["merchant"] = df[
+            description_column
+        ].apply(
+            normalize_merchant
+        )
+
+        # ====================================================
+        # CATEGORY
+        # ====================================================
+
+        df["category"] = df[
+            description_column
+        ].apply(
+            categorize_transaction
+        )
+
+        # ====================================================
+        # HASH
+        # ====================================================
+
+        df["transaction_hash"] = df.apply(
+            lambda row:
+                create_transaction_hash(
+                    row[date_column],
+                    row[description_column],
+                    row[amount_column],
+                    row["transaction_type"]
+                ),
+            axis=1
+        )
+
+        # ====================================================
+        # DUPLICATES
+        # ====================================================
+
+        before_count = len(df)
+
+        df = df.drop_duplicates(
+            subset=[
+                "transaction_hash"
+            ],
+            keep="first"
+        )
+
+        duplicate_count = (
+            before_count
+            - len(df)
+        )
+
+        if duplicate_count > 0:
+
+            st.info(
+                f"ℹ️ {duplicate_count} dubbele "
+                "transacties overgeslagen."
+            )
+
+        # ====================================================
+        # INVALID
+        # ====================================================
+
+        df = df[
+            df[date_column].notna()
+            & df[amount_column].notna()
+        ].copy()
+
         st.success(
-            f"✅ {len(df):,} geldige transacties gevonden."
+            f"✅ {len(df):,} geldige transacties gevonden"
         )
 
         preview_columns = [
@@ -1533,6 +1666,10 @@ if uploaded_file is not None:
             use_container_width=True,
             hide_index=True
         )
+
+        # ====================================================
+        # SAVE
+        # ====================================================
 
         if st.button(
             "💾 Transacties opslaan",
@@ -1553,7 +1690,9 @@ if uploaded_file is not None:
                             selected_account_id,
 
                         "date":
-                            row[date_column].strftime(
+                            row[
+                                date_column
+                            ].strftime(
                                 "%Y-%m-%d"
                             ),
 
@@ -1566,12 +1705,16 @@ if uploaded_file is not None:
 
                         "merchant":
                             str(
-                                row["merchant"]
+                                row[
+                                    "merchant"
+                                ]
                             ),
 
                         "amount":
                             float(
-                                row[amount_column]
+                                row[
+                                    amount_column
+                                ]
                             ),
 
                         "flow":
@@ -1610,7 +1753,7 @@ if uploaded_file is not None:
                     )
 
                     st.success(
-                        f"✅ {len(result.data or [])} "
+                        f"✅ {len(result.data)} "
                         "transacties verwerkt."
                     )
 
@@ -1619,14 +1762,15 @@ if uploaded_file is not None:
                 except Exception as e:
 
                     st.error(
-                        "❌ Transacties konden niet worden opgeslagen: "
-                        f"{e}"
+                        "❌ Transacties konden niet "
+                        f"worden opgeslagen: {e}"
                     )
 
     except Exception as e:
 
         st.error(
-            f"❌ Het CSV-bestand kon niet worden verwerkt: {e}"
+            "❌ Het CSV-bestand kon niet "
+            f"worden verwerkt: {e}"
         )
 
 
@@ -1637,6 +1781,10 @@ if uploaded_file is not None:
 transactions = load_transactions(
     user_id,
     selected_account_id
+)
+
+transaction_df = prepare_transaction_dataframe(
+    transactions
 )
 
 saved_recurring = load_recurring_transactions(
@@ -1650,48 +1798,24 @@ budgets = load_budgets(
 
 
 # ============================================================
-# PREPARE DATAFRAME
-# ============================================================
-
-if transactions:
-
-    transaction_df = pd.DataFrame(
-        transactions
-    )
-
-    transaction_df["date"] = pd.to_datetime(
-        transaction_df["date"],
-        errors="coerce"
-    )
-
-    transaction_df["amount"] = pd.to_numeric(
-        transaction_df["amount"],
-        errors="coerce"
-    )
-
-    transaction_df = transaction_df[
-        transaction_df["date"].notna()
-        & transaction_df["amount"].notna()
-    ].copy()
-
-else:
-
-    transaction_df = pd.DataFrame()
-
-
-# ============================================================
-# DASHBOARD
+# FINANCIAL COCKPIT
 # ============================================================
 
 st.divider()
 
 st.header(
-    "📊 Financial Dashboard"
+    "📊 Financial Cockpit"
 )
 
-if not transaction_df.empty:
+if transaction_df.empty:
 
-    available_months = sorted(
+    st.info(
+        "Upload eerst transacties om je Financial Cockpit te vullen."
+    )
+
+else:
+
+    available_periods = sorted(
         transaction_df[
             "date"
         ]
@@ -1700,78 +1824,39 @@ if not transaction_df.empty:
         reverse=True
     )
 
-    month_labels = [
-        period.strftime("%B %Y")
-        for period in available_months
-    ]
+    current_period = pd.Timestamp.today().to_period("M")
 
-    selected_month_index = st.selectbox(
-        "📅 Maand",
-        range(len(available_months)),
+    if current_period in available_periods:
+
+        default_index = (
+            list(available_periods)
+            .index(current_period)
+        )
+
+    else:
+
+        default_index = 0
+
+    selected_period = st.selectbox(
+        "📅 Selecteer maand",
+        available_periods,
+        index=default_index,
         format_func=lambda x:
-            month_labels[x]
+            x.strftime("%B %Y")
     )
 
-    selected_period = available_months[
-        selected_month_index
-    ]
-
-    current_month_df = transaction_df[
-        transaction_df["date"]
-        .dt.to_period("M")
-        == selected_period
-    ].copy()
-
-    income = current_month_df.loc[
-        current_month_df["flow"] == "Inkomst",
-        "amount"
-    ].sum()
-
-    expenses = current_month_df.loc[
-        current_month_df["flow"] == "Uitgave",
-        "amount"
-    ].abs().sum()
-
-    net = income - expenses
-
-    savings_rate = (
-        net / income * 100
-        if income > 0
-        else 0
+    metrics = calculate_monthly_metrics(
+        transaction_df,
+        selected_period
     )
 
-    # --------------------------------------------------------
-    # PREVIOUS MONTH
-    # --------------------------------------------------------
+    income = metrics["income"]
+    expenses = metrics["expenses"]
+    net = metrics["net"]
 
-    previous_period = (
-        selected_period - 1
-    )
-
-    previous_df = transaction_df[
-        transaction_df["date"]
-        .dt.to_period("M")
-        == previous_period
-    ]
-
-    previous_income = previous_df.loc[
-        previous_df["flow"] == "Inkomst",
-        "amount"
-    ].sum()
-
-    previous_expenses = previous_df.loc[
-        previous_df["flow"] == "Uitgave",
-        "amount"
-    ].abs().sum()
-
-    previous_net = (
-        previous_income
-        - previous_expenses
-    )
-
-    # --------------------------------------------------------
+    # ========================================================
     # KPI
-    # --------------------------------------------------------
+    # ========================================================
 
     col1, col2, col3, col4 = st.columns(4)
 
@@ -1779,173 +1864,247 @@ if not transaction_df.empty:
 
         st.metric(
             "💰 Inkomsten",
-            f"€ {income:,.2f}",
-            delta=(
-                f"€ {income - previous_income:,.2f}"
-                if previous_income != 0
-                else None
-            )
+            euro(income)
         )
 
     with col2:
 
         st.metric(
             "💸 Uitgaven",
-            f"€ {expenses:,.2f}",
-            delta=(
-                f"€ {expenses - previous_expenses:,.2f}"
-                if previous_expenses != 0
-                else None
-            ),
-            delta_color="inverse"
+            euro(expenses)
         )
 
     with col3:
 
         st.metric(
             "📈 Netto",
-            f"€ {net:,.2f}",
-            delta=(
-                f"€ {net - previous_net:,.2f}"
-                if previous_net != 0
-                else None
-            )
+            euro(net)
         )
 
     with col4:
 
+        savings_rate = (
+            net / income * 100
+            if income > 0
+            else 0
+        )
+
         st.metric(
-            "🏦 Spaarratio",
+            "🏦 Spaarpercentage",
             f"{savings_rate:.1f}%"
         )
 
-    # --------------------------------------------------------
-    # INCOME VS EXPENSES
-    # --------------------------------------------------------
+    # ========================================================
+    # MONTHLY CASHFLOW
+    # ========================================================
 
     st.subheader(
-        "📈 Inkomsten vs. uitgaven"
+        "📈 Cashflow"
     )
 
-    chart_data = pd.DataFrame(
-        {
-            "Inkomsten": [
-                income
-            ],
-
-            "Uitgaven": [
-                expenses
-            ],
-
-            "Netto": [
-                net
-            ]
-        }
-    )
-
-    st.bar_chart(
-        chart_data
-    )
-
-    # --------------------------------------------------------
-    # EXPENSE CATEGORIES
-    # --------------------------------------------------------
-
-    st.subheader(
-        "💸 Uitgaven per categorie"
-    )
-
-    expense_df = current_month_df[
-        current_month_df["flow"] == "Uitgave"
+    month_df = transaction_df[
+        transaction_df["date"]
+        .dt.to_period("M")
+        == selected_period
     ].copy()
 
-    if not expense_df.empty:
-
-        expense_df["amount"] = (
-            expense_df["amount"].abs()
+    daily = (
+        month_df
+        .groupby(
+            "date"
         )
-
-        category_summary = (
-            expense_df
-            .groupby("category")["amount"]
-            .sum()
-            .sort_values(
-                ascending=False
-            )
+        .apply(
+            lambda x:
+                x.loc[
+                    x["flow"] == "Inkomst",
+                    "amount"
+                ].sum()
+                -
+                x.loc[
+                    x["flow"] == "Uitgave",
+                    "amount"
+                ].abs().sum()
         )
-
-        st.bar_chart(
-            category_summary
-        )
-
-    else:
-
-        st.info(
-            "Geen uitgaven in deze maand."
-        )
-
-    # --------------------------------------------------------
-    # FORECAST
-    # --------------------------------------------------------
-
-    st.subheader(
-        "🔮 Forecast"
     )
 
-    forecast = calculate_forecast(
-        transaction_df,
-        selected_period,
-        saved_recurring
-    )
+    if not daily.empty:
 
-    if forecast:
+        cumulative = daily.cumsum()
 
-        forecast_col1, forecast_col2, forecast_col3 = (
-            st.columns(3)
+        st.line_chart(
+            cumulative
         )
 
-        with forecast_col1:
+    # ========================================================
+    # CATEGORY EXPENSES
+    # ========================================================
 
-            st.metric(
-                "Verwachte inkomsten",
-                f"€ {forecast['income']:,.2f}"
+    left, right = st.columns(2)
+
+    with left:
+
+        st.subheader(
+            "💸 Uitgaven per categorie"
+        )
+
+        expense_df = month_df[
+            month_df["flow"] == "Uitgave"
+        ].copy()
+
+        if not expense_df.empty:
+
+            expense_df["amount"] = (
+                expense_df["amount"].abs()
             )
 
-        with forecast_col2:
-
-            st.metric(
-                "Verwachte uitgaven",
-                f"€ {forecast['expenses']:,.2f}"
+            category_summary = (
+                expense_df
+                .groupby("category")[
+                    "amount"
+                ]
+                .sum()
+                .sort_values(
+                    ascending=False
+                )
             )
 
-        with forecast_col3:
-
-            st.metric(
-                "Verwacht netto",
-                f"€ {forecast['net']:,.2f}"
-            )
-
-        if forecast["net"] >= 0:
-
-            st.success(
-                f"💰 Op basis van je huidige patroon "
-                f"houd je naar verwachting "
-                f"€ {forecast['net']:,.2f} over."
+            st.bar_chart(
+                category_summary
             )
 
         else:
 
-            st.error(
-                f"⚠️ Op basis van je huidige patroon "
-                f"kom je naar verwachting "
-                f"€ {abs(forecast['net']):,.2f} tekort."
+            st.info(
+                "Geen uitgaven in deze maand."
             )
 
-else:
+    # ========================================================
+    # TOP MERCHANTS
+    # ========================================================
 
-    st.info(
-        "Upload transacties om je dashboard te bekijken."
+    with right:
+
+        st.subheader(
+            "🏪 Grootste uitgaven"
+        )
+
+        if not expense_df.empty:
+
+            merchant_summary = (
+                expense_df
+                .groupby("merchant")[
+                    "amount"
+                ]
+                .sum()
+                .sort_values(
+                    ascending=False
+                )
+                .head(10)
+            )
+
+            merchant_summary.index = (
+                merchant_summary
+                .index
+                .str.title()
+            )
+
+            st.bar_chart(
+                merchant_summary
+            )
+
+
+# ============================================================
+# FORECAST
+# ============================================================
+
+st.divider()
+
+st.header(
+    "🔮 Financiële forecast"
+)
+
+if not transaction_df.empty:
+
+    active_recurring = [
+        item
+        for item in saved_recurring
+        if item.get("active", True)
+    ]
+
+    forecast = calculate_month_forecast(
+        transaction_df,
+        selected_period,
+        active_recurring
     )
+
+    if forecast:
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+
+            st.metric(
+                "Uitgaven tot nu toe",
+                euro(
+                    forecast[
+                        "expenses_so_far"
+                    ]
+                )
+            )
+
+        with col2:
+
+            st.metric(
+                "Verwachte uitgaven",
+                euro(
+                    forecast[
+                        "projected_expenses"
+                    ]
+                )
+            )
+
+        with col3:
+
+            st.metric(
+                "Verwacht netto",
+                euro(
+                    forecast[
+                        "projected_net"
+                    ]
+                )
+            )
+
+        if forecast[
+            "recurring_remaining"
+        ] > 0:
+
+            st.info(
+                "🔄 Nog verwachte terugkerende "
+                f"betalingen deze maand: "
+                f"{euro(forecast['recurring_remaining'])}"
+            )
+
+        if forecast[
+            "projected_net"
+        ] >= 0:
+
+            st.success(
+                "🟢 Op basis van je huidige "
+                "uitgavenpatroon lijkt je maand positief te eindigen."
+            )
+
+        else:
+
+            st.warning(
+                "🟠 Op basis van je huidige "
+                "uitgavenpatroon lijkt je maand negatief te eindigen."
+            )
+
+    else:
+
+        st.info(
+            "Forecast is alleen beschikbaar voor de huidige maand."
+        )
 
 
 # ============================================================
@@ -1959,8 +2118,7 @@ st.header(
 )
 
 st.caption(
-    "Financial Cockpit zoekt automatisch naar betalingen "
-    "die regelmatig terugkomen."
+    "Financial Cockpit zoekt naar betalingen die regelmatig terugkomen."
 )
 
 if st.button(
@@ -1984,16 +2142,11 @@ if st.button(
         if saved:
 
             st.success(
-                f"✅ {len(saved)} terugkerende betalingen opgeslagen."
+                f"✅ {len(saved)} terugkerende "
+                "betalingen opgeslagen."
             )
 
             st.rerun()
-
-        else:
-
-            st.warning(
-                "Betalingen gevonden, maar opslaan is mislukt."
-            )
 
     else:
 
@@ -2021,9 +2174,43 @@ if saved_recurring:
         if not item.get("active", True)
     ]
 
-    recurring_monthly = monthly_recurring_cost(
-        saved_recurring
-    )
+    monthly_recurring_cost = 0.0
+
+    for item in active_recurring:
+
+        amount = float(
+            item.get(
+                "expected_amount",
+                0
+            ) or 0
+        )
+
+        frequency = item.get(
+            "frequency",
+            ""
+        )
+
+        if frequency == "Wekelijks":
+
+            monthly_recurring_cost += (
+                amount * 52 / 12
+            )
+
+        elif frequency == "Maandelijks":
+
+            monthly_recurring_cost += amount
+
+        elif frequency == "Per kwartaal":
+
+            monthly_recurring_cost += (
+                amount / 3
+            )
+
+        elif frequency == "Jaarlijks":
+
+            monthly_recurring_cost += (
+                amount / 12
+            )
 
     col1, col2, col3 = st.columns(3)
 
@@ -2037,8 +2224,8 @@ if saved_recurring:
     with col2:
 
         st.metric(
-            "💸 Maandelijkse kosten",
-            f"€ {recurring_monthly:,.2f}"
+            "💸 Geschatte maandlasten",
+            euro(monthly_recurring_cost)
         )
 
     with col3:
@@ -2048,9 +2235,9 @@ if saved_recurring:
             len(inactive_recurring)
         )
 
-    st.subheader(
-        "📋 Mijn terugkerende betalingen"
-    )
+    # ========================================================
+    # ACTIVE
+    # ========================================================
 
     for recurring in active_recurring:
 
@@ -2081,11 +2268,6 @@ if saved_recurring:
             "-"
         )
 
-        last_occurrence = recurring.get(
-            "last_occurrence",
-            "-"
-        )
-
         recurring_id = recurring.get(
             "id"
         )
@@ -2112,7 +2294,7 @@ if saved_recurring:
 
                 st.metric(
                     "Bedrag",
-                    f"€ {expected_amount:,.2f}"
+                    euro(expected_amount)
                 )
 
             with col3:
@@ -2124,9 +2306,14 @@ if saved_recurring:
 
             with col4:
 
+                reliability = recurring.get(
+                    "reliability",
+                    "-"
+                )
+
                 st.metric(
-                    "Laatste",
-                    last_occurrence
+                    "Betrouwbaarheid",
+                    reliability
                 )
 
             button_col1, button_col2 = st.columns(2)
@@ -2160,17 +2347,17 @@ if saved_recurring:
 
                     st.rerun()
 
+    # ========================================================
+    # INACTIVE
+    # ========================================================
+
     if inactive_recurring:
 
         with st.expander(
-            "⏸️ Inactieve betalingen"
+            "⏸️ Inactieve terugkerende betalingen"
         ):
 
             for recurring in inactive_recurring:
-
-                recurring_id = recurring.get(
-                    "id"
-                )
 
                 merchant = recurring.get(
                     "merchant",
@@ -2187,6 +2374,10 @@ if saved_recurring:
                 frequency = recurring.get(
                     "frequency",
                     "Onbekend"
+                )
+
+                recurring_id = recurring.get(
+                    "id"
                 )
 
                 col1, col2, col3 = st.columns(
@@ -2206,7 +2397,7 @@ if saved_recurring:
                 with col2:
 
                     st.write(
-                        f"€ {expected_amount:,.2f}"
+                        euro(expected_amount)
                     )
 
                 with col3:
@@ -2232,48 +2423,6 @@ else:
 
 
 # ============================================================
-# TRANSACTIONS
-# ============================================================
-
-st.divider()
-
-st.header(
-    "💳 Mijn transacties"
-)
-
-if not transaction_df.empty:
-
-    display_columns = [
-        "date",
-        "description",
-        "merchant",
-        "amount",
-        "flow",
-        "category"
-    ]
-
-    available_columns = [
-        column
-        for column in display_columns
-        if column in transaction_df.columns
-    ]
-
-    st.dataframe(
-        transaction_df[
-            available_columns
-        ],
-        use_container_width=True,
-        hide_index=True
-    )
-
-else:
-
-    st.info(
-        "Nog geen transacties."
-    )
-
-
-# ============================================================
 # BUDGETS
 # ============================================================
 
@@ -2283,8 +2432,12 @@ st.header(
     "🎯 Mijn budgetten"
 )
 
-st.caption(
+st.markdown(
     "Stel per categorie een maximaal bedrag per maand in."
+)
+
+budgets = load_budgets(
+    user_id
 )
 
 with st.expander(
@@ -2297,7 +2450,8 @@ with st.expander(
             category
             for category in CATEGORIES
             if category != "Inkomen"
-        ]
+        ],
+        key="budget_category"
     )
 
     budget_amount = st.number_input(
@@ -2305,7 +2459,8 @@ with st.expander(
         min_value=0.0,
         step=25.0,
         value=250.0,
-        format="%.2f"
+        format="%.2f",
+        key="budget_amount"
     )
 
     if st.button(
@@ -2329,57 +2484,56 @@ with st.expander(
             st.rerun()
 
 
-budgets = load_budgets(
-    user_id
-)
+# ============================================================
+# BUDGET OVERVIEW
+# ============================================================
 
 if budgets and not transaction_df.empty:
 
-    valid_dates = transaction_df[
-        transaction_df["date"].notna()
-    ]
-
-    available_months = sorted(
-        valid_dates["date"]
-        .dt.to_period("M")
-        .unique(),
-        reverse=True
+    budget_df = pd.DataFrame(
+        budgets
     )
 
-    selected_budget_index = st.selectbox(
-        "📅 Budgetmaand",
-        range(len(available_months)),
-        format_func=lambda x:
-            available_months[x].strftime("%B %Y"),
-        key="budget_month"
+    st.subheader(
+        f"🎯 Budgetten voor {selected_period.strftime('%B %Y')}"
     )
 
-    budget_period = available_months[
-        selected_budget_index
-    ]
-
-    monthly_transactions = transaction_df[
-        transaction_df["date"]
-        .dt.to_period("M")
-        == budget_period
+    month_expenses = transaction_df[
+        (
+            transaction_df["date"]
+            .dt.to_period("M")
+            == selected_period
+        )
+        &
+        (
+            transaction_df["flow"]
+            == "Uitgave"
+        )
     ].copy()
 
-    monthly_expenses = monthly_transactions[
-        monthly_transactions["flow"] == "Uitgave"
-    ].copy()
+    if not month_expenses.empty:
 
-    monthly_expenses["expense_amount"] = (
-        monthly_expenses["amount"].abs()
-    )
+        month_expenses[
+            "expense_amount"
+        ] = (
+            month_expenses["amount"]
+            .abs()
+        )
 
-    spending = (
-        monthly_expenses
-        .groupby("category")["expense_amount"]
-        .sum()
-        .to_dict()
-    )
+        spending = (
+            month_expenses
+            .groupby("category")[
+                "expense_amount"
+            ]
+            .sum()
+            .to_dict()
+        )
 
-    for budget in budgets:
+    else:
+
+        spending = {}
+
+    for _, budget in budget_df.iterrows():
 
         category = budget[
             "category"
@@ -2404,7 +2558,9 @@ if budgets and not transaction_df.empty:
         )
 
         percentage = (
-            spent / budget_amount * 100
+            spent
+            / budget_amount
+            * 100
             if budget_amount > 0
             else 0
         )
@@ -2419,21 +2575,21 @@ if budgets and not transaction_df.empty:
 
             st.metric(
                 "Budget",
-                f"€ {budget_amount:,.2f}"
+                euro(budget_amount)
             )
 
         with col2:
 
             st.metric(
                 "Uitgegeven",
-                f"€ {spent:,.2f}"
+                euro(spent)
             )
 
         with col3:
 
             st.metric(
                 "Resterend",
-                f"€ {remaining:,.2f}"
+                euro(remaining)
             )
 
         progress = min(
@@ -2452,42 +2608,73 @@ if budgets and not transaction_df.empty:
 
             st.error(
                 f"🔴 Budget overschreden met "
-                f"€ {abs(remaining):,.2f}"
+                f"{euro(abs(remaining))}"
             )
 
         elif percentage >= 80:
 
             st.warning(
-                f"🟠 {percentage:.0f}% van het budget gebruikt."
+                f"🟠 {percentage:.0f}% van het "
+                "budget gebruikt."
             )
 
         else:
 
             st.success(
-                f"🟢 {percentage:.0f}% van het budget gebruikt."
+                f"🟢 {percentage:.0f}% van het "
+                "budget gebruikt."
             )
 
-else:
+        st.divider()
 
-    if not budgets:
+elif not budgets:
 
-        st.info(
-            "Je hebt nog geen budgetten ingesteld."
-        )
-
-    else:
-
-        st.info(
-            "Upload transacties om je budgetten te vergelijken."
-        )
+    st.info(
+        "Je hebt nog geen budgetten ingesteld."
+    )
 
 
 # ============================================================
-# END
+# ALL TRANSACTIONS
 # ============================================================
 
 st.divider()
 
-st.caption(
-    "Financial Cockpit · Persoonlijk financieel overzicht"
+st.header(
+    "💳 Mijn transacties"
 )
+
+if transactions:
+
+    transactions_display = pd.DataFrame(
+        transactions
+    )
+
+    display_columns = [
+        "date",
+        "description",
+        "merchant",
+        "amount",
+        "flow",
+        "category"
+    ]
+
+    available_columns = [
+        column
+        for column in display_columns
+        if column in transactions_display.columns
+    ]
+
+    st.dataframe(
+        transactions_display[
+            available_columns
+        ],
+        use_container_width=True,
+        hide_index=True
+    )
+
+else:
+
+    st.info(
+        "Nog geen transacties voor deze rekening."
+    )
