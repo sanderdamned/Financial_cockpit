@@ -1528,6 +1528,28 @@ if st.button(
         "detected_recurring_transactions"
     ] = recurring_transactions
 
+    if recurring_transactions:
+
+        saved = save_recurring_transactions(
+            user_id,
+            selected_account_id,
+            recurring_transactions
+        )
+
+        if saved:
+
+            st.success(
+                f"✅ {len(saved)} terugkerende "
+                "transacties opgeslagen."
+            )
+
+        else:
+
+            st.warning(
+                "Er zijn transacties gevonden, "
+                "maar ze konden niet worden opgeslagen."
+            )
+
 
 # ------------------------------------------------------------
 # SHOW RESULTS
