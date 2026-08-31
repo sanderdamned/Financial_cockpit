@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import pandas as pd
 import hashlib
@@ -45,7 +46,6 @@ supabase = get_supabase()
 # ============================================================
 
 CATEGORY_RULES = {
-
     "Boodschappen": [
         "albert heijn",
         "ah ",
@@ -187,13 +187,10 @@ CATEGORIES = [
 # ============================================================
 
 def categorize_transaction(description):
-
     text = str(description).lower()
 
     for category, keywords in CATEGORY_RULES.items():
-
         for keyword in keywords:
-
             if keyword in text:
                 return category
 
@@ -201,13 +198,10 @@ def categorize_transaction(description):
 
 
 def normalize_merchant(description):
-
     text = str(description).lower().strip()
 
     for keywords in CATEGORY_RULES.values():
-
         for keyword in keywords:
-
             if keyword in text:
                 return keyword.strip()
 
@@ -220,7 +214,6 @@ def create_transaction_hash(
     amount,
     transaction_type,
 ):
-
     raw = (
         f"{transaction_date}|"
         f"{description}|"
@@ -234,22 +227,14 @@ def create_transaction_hash(
 
 
 def euro(value):
-
     try:
-
-        return f"€ {float(value):,.2f}".replace(
-            ",",
-            "X",
-        ).replace(
-            ".",
-            ",",
-        ).replace(
-            "X",
-            ".",
+        return (
+            f"€ {float(value):,.2f}"
+            .replace(",", "X")
+            .replace(".", ",")
+            .replace("X", ".")
         )
-
     except Exception:
-
         return "€ 0,00"
 
 
@@ -258,9 +243,7 @@ def euro(value):
 # ============================================================
 
 def load_accounts(user_id):
-
     try:
-
         result = (
             supabase
             .table("accounts")
@@ -273,11 +256,9 @@ def load_accounts(user_id):
         return result.data or []
 
     except Exception as e:
-
         st.error(
             f"❌ Rekeningen konden niet worden geladen: {e}"
         )
-
         return []
 
 
@@ -285,13 +266,8 @@ def load_accounts(user_id):
 # DATABASE - TRANSACTIONS
 # ============================================================
 
-def load_transactions(
-    user_id,
-    account_id,
-):
-
+def load_transactions(user_id, account_id):
     try:
-
         result = (
             supabase
             .table("transactions")
@@ -305,11 +281,9 @@ def load_transactions(
         return result.data or []
 
     except Exception as e:
-
         st.error(
             f"❌ Transacties konden niet worden geladen: {e}"
         )
-
         return []
 
 
@@ -318,9 +292,7 @@ def load_transactions(
 # ============================================================
 
 def load_budgets(user_id):
-
     try:
-
         result = (
             supabase
             .table("budgets")
@@ -333,11 +305,9 @@ def load_budgets(user_id):
         return result.data or []
 
     except Exception as e:
-
         st.error(
             f"❌ Budgetten konden niet worden geladen: {e}"
         )
-
         return []
 
 
@@ -346,9 +316,7 @@ def save_budget(
     category,
     monthly_limit,
 ):
-
     try:
-
         result = (
             supabase
             .table("budgets")
@@ -356,9 +324,7 @@ def save_budget(
                 {
                     "user_id": user_id,
                     "category": category,
-                    "monthly_limit": float(
-                        monthly_limit
-                    ),
+                    "monthly_limit": float(monthly_limit),
                 },
                 on_conflict="user_id,category",
             )
@@ -368,11 +334,9 @@ def save_budget(
         return result.data
 
     except Exception as e:
-
         st.error(
             f"❌ Budget kon niet worden opgeslagen: {e}"
         )
-
         return None
 
 
@@ -384,9 +348,7 @@ def load_recurring_transactions(
     user_id,
     account_id,
 ):
-
     try:
-
         result = (
             supabase
             .table("recurring_transactions")
@@ -400,12 +362,10 @@ def load_recurring_transactions(
         return result.data or []
 
     except Exception as e:
-
         st.error(
             "❌ Terugkerende transacties konden "
             f"niet worden geladen: {e}"
         )
-
         return []
 
 
@@ -414,14 +374,12 @@ def save_recurring_transactions(
     account_id,
     recurring_transactions,
 ):
-
     if not recurring_transactions:
         return []
 
     records = []
 
     for recurring in recurring_transactions:
-
         records.append(
             {
                 "user_id": user_id,
@@ -443,7 +401,6 @@ def save_recurring_transactions(
         )
 
     try:
-
         result = (
             supabase
             .table("recurring_transactions")
@@ -461,12 +418,10 @@ def save_recurring_transactions(
         return result.data or []
 
     except Exception as e:
-
         st.error(
             "❌ Terugkerende transacties konden "
             f"niet worden opgeslagen: {e}"
         )
-
         return []
 
 
@@ -474,9 +429,7 @@ def update_recurring_active(
     recurring_id,
     active,
 ):
-
     try:
-
         result = (
             supabase
             .table("recurring_transactions")
@@ -485,50 +438,36 @@ def update_recurring_active(
                     "active": active,
                 }
             )
-            .eq(
-                "id",
-                recurring_id,
-            )
+            .eq("id", recurring_id)
             .execute()
         )
 
         return result.data
 
     except Exception as e:
-
         st.error(
             f"❌ Status kon niet worden gewijzigd: {e}"
         )
-
         return None
 
 
-def delete_recurring_transaction(
-    recurring_id,
-):
-
+def delete_recurring_transaction(recurring_id):
     try:
-
         result = (
             supabase
             .table("recurring_transactions")
             .delete()
-            .eq(
-                "id",
-                recurring_id,
-            )
+            .eq("id", recurring_id)
             .execute()
         )
 
         return result.data
 
     except Exception as e:
-
         st.error(
             "❌ Terugkerende transactie kon "
             f"niet worden verwijderd: {e}"
         )
-
         return None
 
 
@@ -536,16 +475,12 @@ def delete_recurring_transaction(
 # RECURRING DETECTION
 # ============================================================
 
-def detect_recurring_transactions(
-    transactions,
-):
+def detect_recurring_transactions(transactions):
 
     if not transactions:
         return []
 
-    df = pd.DataFrame(
-        transactions
-    )
+    df = pd.DataFrame(transactions)
 
     if df.empty:
         return []
@@ -558,7 +493,6 @@ def detect_recurring_transactions(
     ]
 
     for column in required_columns:
-
         if column not in df.columns:
             return []
 
@@ -598,41 +532,25 @@ def detect_recurring_transactions(
     if df.empty:
         return []
 
-    df["amount_abs"] = (
-        df["amount"].abs()
-    )
+    df["amount_abs"] = df["amount"].abs()
 
     recurring = []
 
-    for merchant, group in df.groupby(
-        "merchant"
-    ):
+    for merchant, group in df.groupby("merchant"):
 
         if len(group) < 2:
             continue
 
-        group = group.sort_values(
-            "date"
-        ).copy()
+        group = group.sort_values("date").copy()
 
-        dates = list(
-            group["date"]
-        )
-
-        amounts = list(
-            group["amount_abs"]
-        )
+        dates = list(group["date"])
+        amounts = list(group["amount_abs"])
 
         intervals = []
 
-        for i in range(
-            1,
-            len(dates),
-        ):
-
+        for i in range(1, len(dates)):
             days = (
-                dates[i]
-                - dates[i - 1]
+                dates[i] - dates[i - 1]
             ).days
 
             if days > 0:
@@ -642,60 +560,47 @@ def detect_recurring_transactions(
             continue
 
         average_interval = (
-            sum(intervals)
-            / len(intervals)
+            sum(intervals) / len(intervals)
         )
 
         if 25 <= average_interval <= 35:
-
             frequency = "Maandelijks"
 
         elif 6 <= average_interval <= 8:
-
             frequency = "Wekelijks"
 
         elif 80 <= average_interval <= 100:
-
             frequency = "Per kwartaal"
 
         elif 350 <= average_interval <= 380:
-
             frequency = "Jaarlijks"
 
         else:
-
             continue
 
         average_amount = (
-            sum(amounts)
-            / len(amounts)
+            sum(amounts) / len(amounts)
         )
 
         if average_amount == 0:
             continue
 
         max_difference = max(
-            abs(
-                amount - average_amount
-            )
+            abs(amount - average_amount)
             for amount in amounts
         )
 
         percentage_difference = (
-            max_difference
-            / average_amount
+            max_difference / average_amount
         )
 
         if percentage_difference <= 0.15:
-
             reliability = "Hoog"
 
         elif percentage_difference <= 0.30:
-
             reliability = "Gemiddeld"
 
         else:
-
             continue
 
         category = "Overig"
@@ -709,7 +614,6 @@ def detect_recurring_transactions(
             )
 
             if not categories.empty:
-
                 category = (
                     categories
                     .mode()
@@ -721,9 +625,7 @@ def detect_recurring_transactions(
         next_date = (
             last_date
             + pd.Timedelta(
-                days=round(
-                    average_interval
-                )
+                days=round(average_interval)
             )
         )
 
@@ -737,16 +639,13 @@ def detect_recurring_transactions(
                     2,
                 ),
                 "occurrences": len(group),
-                "last_occurrence":
-                    last_date.strftime(
-                        "%Y-%m-%d"
-                    ),
-                "next_occurrence":
-                    next_date.strftime(
-                        "%Y-%m-%d"
-                    ),
-                "reliability":
-                    reliability,
+                "last_occurrence": (
+                    last_date.strftime("%Y-%m-%d")
+                ),
+                "next_occurrence": (
+                    next_date.strftime("%Y-%m-%d")
+                ),
+                "reliability": reliability,
             }
         )
 
@@ -759,9 +658,7 @@ def detect_recurring_transactions(
 
 def show_login():
 
-    st.title(
-        "💰 Financial Cockpit"
-    )
+    st.title("💰 Financial Cockpit")
 
     st.markdown(
         "Log in om je persoonlijke financiële dashboard te bekijken."
@@ -794,11 +691,9 @@ def show_login():
         ):
 
             if not email or not password:
-
                 st.error(
                     "Vul je e-mailadres en wachtwoord in."
                 )
-
                 return
 
             try:
@@ -814,27 +709,18 @@ def show_login():
                     )
                 )
 
-                if (
-                    response.user
-                    and response.session
-                ):
+                if response.user and response.session:
 
-                    st.session_state[
-                        "user"
-                    ] = response.user
-
-                    st.session_state[
-                        "access_token"
-                    ] = (
-                        response.session
-                        .access_token
+                    st.session_state["user"] = (
+                        response.user
                     )
 
-                    st.session_state[
-                        "refresh_token"
-                    ] = (
-                        response.session
-                        .refresh_token
+                    st.session_state["access_token"] = (
+                        response.session.access_token
+                    )
+
+                    st.session_state["refresh_token"] = (
+                        response.session.refresh_token
                     )
 
                     supabase.auth.set_session(
@@ -881,27 +767,21 @@ def show_login():
         ):
 
             if not email:
-
                 st.error(
                     "Vul een e-mailadres in."
                 )
-
                 return
 
             if password != password_repeat:
-
                 st.error(
                     "❌ Wachtwoorden komen niet overeen."
                 )
-
                 return
 
             if len(password) < 8:
-
                 st.error(
                     "❌ Wachtwoord moet minimaal 8 tekens bevatten."
                 )
-
                 return
 
             try:
@@ -951,17 +831,14 @@ if "user" not in st.session_state:
 
 if (
     "access_token" not in st.session_state
-    or
-    "refresh_token" not in st.session_state
+    or "refresh_token" not in st.session_state
 ):
 
     st.warning(
         "Je sessie is niet meer beschikbaar."
     )
 
-    if st.button(
-        "Opnieuw inloggen"
-    ):
+    if st.button("Opnieuw inloggen"):
 
         st.session_state.clear()
 
@@ -973,12 +850,8 @@ if (
 try:
 
     supabase.auth.set_session(
-        st.session_state[
-            "access_token"
-        ],
-        st.session_state[
-            "refresh_token"
-        ],
+        st.session_state["access_token"],
+        st.session_state["refresh_token"],
     )
 
 except Exception:
@@ -992,10 +865,7 @@ except Exception:
     st.stop()
 
 
-user = st.session_state[
-    "user"
-]
-
+user = st.session_state["user"]
 user_id = user.id
 
 
@@ -1003,21 +873,15 @@ user_id = user.id
 # HEADER
 # ============================================================
 
-header_left, header_right = st.columns(
-    [5, 1]
-)
+header_left, header_right = st.columns([5, 1])
 
 with header_left:
 
-    st.title(
-        "💰 Financial Cockpit"
-    )
+    st.title("💰 Financial Cockpit")
 
 with header_right:
 
-    if st.button(
-        "Uitloggen"
-    ):
+    if st.button("Uitloggen"):
 
         try:
             supabase.auth.sign_out()
@@ -1037,13 +901,9 @@ st.caption(
 # ACCOUNTS
 # ============================================================
 
-accounts = load_accounts(
-    user_id
-)
+accounts = load_accounts(user_id)
 
-st.subheader(
-    "🏦 Mijn rekeningen"
-)
+st.subheader("🏦 Mijn rekeningen")
 
 with st.expander(
     "➕ Bankrekening toevoegen",
@@ -1165,9 +1025,7 @@ saved_recurring = load_recurring_transactions(
     selected_account_id,
 )
 
-budgets = load_budgets(
-    user_id
-)
+budgets = load_budgets(user_id)
 
 
 # ============================================================
@@ -1176,9 +1034,7 @@ budgets = load_budgets(
 
 st.divider()
 
-st.subheader(
-    "📁 Transacties importeren"
-)
+st.subheader("📁 Transacties importeren")
 
 uploaded_file = st.file_uploader(
     "Upload je banktransacties als CSV",
@@ -1343,9 +1199,7 @@ if uploaded_file is not None:
             errors="coerce",
         )
 
-        missing_dates = (
-            df[date_column].isna()
-        )
+        missing_dates = df[date_column].isna()
 
         if missing_dates.any():
 
@@ -1470,8 +1324,7 @@ if uploaded_file is not None:
         )
 
         duplicate_count = (
-            before_count
-            - len(df)
+            before_count - len(df)
         )
 
         if duplicate_count > 0:
@@ -1488,96 +1341,82 @@ if uploaded_file is not None:
         df = df[
             df[date_column].notna()
             & df[amount_column].notna()
+            & df["flow"].isin(
+                ["Inkomst", "Uitgave"]
+            )
         ].copy()
 
-        st.success(
-            f"✅ {len(df):,} geldige transacties gevonden"
-        )
+        if df.empty:
 
-        preview_columns = [
-            date_column,
-            description_column,
-            "merchant",
-            amount_column,
-            "flow",
-            "category",
-        ]
+            st.warning(
+                "⚠️ Geen geldige transacties gevonden."
+            )
 
-        st.dataframe(
-            df[preview_columns],
-            use_container_width=True,
-            hide_index=True,
-        )
+        else:
 
-        # ----------------------------------------------------
-        # SAVE
-        # ----------------------------------------------------
+            st.success(
+                f"✅ {len(df):,} geldige transacties gevonden"
+            )
 
-        if st.button(
-            "💾 Transacties opslaan",
-            type="primary",
-            use_container_width=True,
-        ):
+            preview_columns = [
+                date_column,
+                description_column,
+                "merchant",
+                amount_column,
+                "flow",
+                "category",
+            ]
 
-            transactions_to_insert = []
+            st.dataframe(
+                df[preview_columns],
+                use_container_width=True,
+                hide_index=True,
+            )
 
-            for _, row in df.iterrows():
+            # ------------------------------------------------
+            # SAVE
+            # ------------------------------------------------
 
-                transactions_to_insert.append(
-                    {
-                        "user_id":
-                            user_id,
+            if st.button(
+                "💾 Transacties opslaan",
+                type="primary",
+                use_container_width=True,
+            ):
 
-                        "account_id":
-                            selected_account_id,
+                transactions_to_insert = []
 
-                        "date":
-                            row[
+                for _, row in df.iterrows():
+
+                    transactions_to_insert.append(
+                        {
+                            "user_id": user_id,
+                            "account_id": selected_account_id,
+                            "date": row[
                                 date_column
-                            ].strftime(
-                                "%Y-%m-%d"
-                            ),
-
-                        "description":
-                            str(
+                            ].strftime("%Y-%m-%d"),
+                            "description": str(
                                 row[
                                     description_column
                                 ]
                             ),
-
-                        "merchant":
-                            str(
-                                row[
-                                    "merchant"
-                                ]
+                            "merchant": str(
+                                row["merchant"]
                             ),
-
-                        "amount":
-                            float(
+                            "amount": float(
                                 row[
                                     amount_column
                                 ]
                             ),
-
-                        "flow":
-                            row["flow"],
-
-                        "category":
-                            row["category"],
-
-                        "transaction_type":
-                            row[
+                            "flow": row["flow"],
+                            "category": row["category"],
+                            "transaction_type": row[
                                 "transaction_type"
                             ],
-
-                        "transaction_hash":
-                            row[
+                            "transaction_hash": row[
                                 "transaction_hash"
                             ],
-                    }
-                )
-
-            if transactions_to_insert:
+                        }
+                    )
 
                 try:
 
@@ -1595,7 +1434,7 @@ if uploaded_file is not None:
                     )
 
                     st.success(
-                        f"✅ {len(result.data)} "
+                        f"✅ {len(result.data or [])} "
                         "transacties verwerkt."
                     )
 
@@ -1622,9 +1461,7 @@ if uploaded_file is not None:
 
 st.divider()
 
-st.header(
-    "📊 Financial Cockpit"
-)
+st.header("📊 Financial Cockpit")
 
 if transaction_df.empty:
 
@@ -1634,14 +1471,8 @@ if transaction_df.empty:
 
 else:
 
-    # --------------------------------------------------------
-    # PERIOD SELECTION
-    # --------------------------------------------------------
-
     available_periods = sorted(
-        transaction_df[
-            "date"
-        ]
+        transaction_df["date"]
         .dt.to_period("M")
         .unique(),
         reverse=True,
@@ -1654,10 +1485,9 @@ else:
 
     if current_period in available_periods:
 
-        default_index = (
-            list(available_periods)
-            .index(current_period)
-        )
+        default_index = list(
+            available_periods
+        ).index(current_period)
 
     else:
 
@@ -1671,10 +1501,6 @@ else:
             x.strftime("%B %Y"),
     )
 
-    # --------------------------------------------------------
-    # MONTHLY METRICS
-    # --------------------------------------------------------
-
     metrics = calculate_monthly_metrics(
         transaction_df,
         selected_period,
@@ -1684,28 +1510,21 @@ else:
     expenses = metrics["expenses"]
     net = metrics["net"]
 
-    # --------------------------------------------------------
-    # KPI
-    # --------------------------------------------------------
-
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-
         st.metric(
             "💰 Inkomsten",
             euro(income),
         )
 
     with col2:
-
         st.metric(
             "💸 Uitgaven",
             euro(expenses),
         )
 
     with col3:
-
         st.metric(
             "📈 Netto",
             euro(net),
@@ -1728,9 +1547,7 @@ else:
     # CASHFLOW
     # --------------------------------------------------------
 
-    st.subheader(
-        "📈 Cashflow"
-    )
+    st.subheader("📈 Cashflow")
 
     month_df = transaction_df[
         transaction_df["date"]
@@ -1759,9 +1576,7 @@ else:
 
         cumulative = daily.cumsum()
 
-        st.line_chart(
-            cumulative
-        )
+        st.line_chart(cumulative)
 
     # --------------------------------------------------------
     # CATEGORY + MERCHANT
@@ -1787,13 +1602,9 @@ else:
 
             category_summary = (
                 expense_df
-                .groupby("category")[
-                    "amount"
-                ]
+                .groupby("category")["amount"]
                 .sum()
-                .sort_values(
-                    ascending=False
-                )
+                .sort_values(ascending=False)
             )
 
             st.bar_chart(
@@ -1816,9 +1627,7 @@ else:
 
             merchant_summary = (
                 expense_df
-                .groupby("merchant")[
-                    "amount"
-                ]
+                .groupby("merchant")["amount"]
                 .sum()
                 .sort_values(
                     ascending=False
@@ -1843,9 +1652,7 @@ else:
 
 st.divider()
 
-st.header(
-    "🧠 Financial Health"
-)
+st.header("🧠 Financial Health")
 
 if not transaction_df.empty:
 
@@ -1882,9 +1689,7 @@ if not transaction_df.empty:
             st.metric(
                 "Verwachte inkomsten",
                 euro(
-                    forecast[
-                        "projected_income"
-                    ]
+                    forecast["projected_income"]
                 ),
             )
 
@@ -1893,9 +1698,7 @@ if not transaction_df.empty:
             st.metric(
                 "Verwachte uitgaven",
                 euro(
-                    forecast[
-                        "projected_expenses"
-                    ]
+                    forecast["projected_expenses"]
                 ),
             )
 
@@ -1904,9 +1707,7 @@ if not transaction_df.empty:
             st.metric(
                 "Verwacht netto",
                 euro(
-                    forecast[
-                        "projected_net"
-                    ]
+                    forecast["projected_net"]
                 ),
             )
 
@@ -1920,10 +1721,6 @@ if not transaction_df.empty:
             st.caption(
                 health["status"]
             )
-
-        # ----------------------------------------------------
-        # MAIN MESSAGE
-        # ----------------------------------------------------
 
         projected_net = forecast[
             "projected_net"
@@ -1944,10 +1741,6 @@ if not transaction_df.empty:
                 f"**{euro(abs(projected_net))}** tekort."
             )
 
-        # ----------------------------------------------------
-        # SAFE TO SPEND
-        # ----------------------------------------------------
-
         safe_to_spend = calculate_safe_to_spend(
             forecast,
             buffer=0,
@@ -1959,10 +1752,6 @@ if not transaction_df.empty:
             "uitgeven zonder dat je maandresultaat negatief wordt."
         )
 
-        # ----------------------------------------------------
-        # RECURRING
-        # ----------------------------------------------------
-
         if forecast[
             "recurring_remaining"
         ] > 0:
@@ -1973,10 +1762,6 @@ if not transaction_df.empty:
                 f"{euro(forecast['recurring_remaining'])}"
             )
 
-        # ----------------------------------------------------
-        # WARNINGS
-        # ----------------------------------------------------
-
         if health["warnings"]:
 
             st.subheader(
@@ -1985,9 +1770,7 @@ if not transaction_df.empty:
 
             for warning in health["warnings"]:
 
-                st.warning(
-                    warning
-                )
+                st.warning(warning)
 
         else:
 
@@ -2003,9 +1786,7 @@ if not transaction_df.empty:
 
 st.divider()
 
-st.header(
-    "🔄 Terugkerende betalingen"
-)
+st.header("🔄 Terugkerende betalingen")
 
 st.caption(
     "Financial Cockpit zoekt naar betalingen die regelmatig terugkomen."
@@ -2126,13 +1907,9 @@ if saved_recurring:
             "-",
         )
 
-        recurring_id = recurring.get(
-            "id"
-        )
+        recurring_id = recurring.get("id")
 
-        with st.container(
-            border=True
-        ):
+        with st.container(border=True):
 
             col1, col2, col3, col4 = st.columns(
                 [3, 1.5, 1.5, 1.5]
@@ -2234,9 +2011,7 @@ if saved_recurring:
                     "Onbekend",
                 )
 
-                recurring_id = recurring.get(
-                    "id"
-                )
+                recurring_id = recurring.get("id")
 
                 col1, col2, col3 = st.columns(
                     [4, 2, 2]
@@ -2248,9 +2023,7 @@ if saved_recurring:
                         f"**{merchant.title()}**"
                     )
 
-                    st.caption(
-                        frequency
-                    )
+                    st.caption(frequency)
 
                 with col2:
 
@@ -2286,21 +2059,15 @@ else:
 
 st.divider()
 
-st.header(
-    "🎯 Mijn budgetten"
-)
+st.header("🎯 Mijn budgetten")
 
 st.markdown(
     "Stel per categorie een maximaal bedrag per maand in."
 )
 
-budgets = load_budgets(
-    user_id
-)
+budgets = load_budgets(user_id)
 
-with st.expander(
-    "➕ Budget instellen"
-):
+with st.expander("➕ Budget instellen"):
 
     budget_category = st.selectbox(
         "Categorie",
@@ -2395,16 +2162,11 @@ if budgets and not transaction_df.empty:
             )
 
         progress = min(
-            max(
-                percentage / 100,
-                0,
-            ),
+            max(percentage / 100, 0),
             1,
         )
 
-        st.progress(
-            progress
-        )
+        st.progress(progress)
 
         if budget["over_budget"]:
 
@@ -2442,9 +2204,7 @@ elif not budgets:
 
 st.divider()
 
-st.header(
-    "💳 Mijn transacties"
-)
+st.header("💳 Mijn transacties")
 
 if transactions:
 
@@ -2480,3 +2240,4 @@ else:
     st.info(
         "Nog geen transacties voor deze rekening."
     )
+```
