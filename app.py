@@ -2533,4 +2533,3 @@ st.info(
     "Gebruik hierboven '➕ Budget instellen' "
     "om je eerste budget toe te voegen."
 )
-```
