@@ -1477,7 +1477,87 @@ else:
     st.info(
         "Nog geen transacties voor deze rekening."
     )
+# ============================================================
+# RECURRING TRANSACTIONS
+# ============================================================
 
+st.divider()
+
+st.subheader(
+    "🔄 Terugkerende transacties"
+)
+
+st.caption(
+    "De app zoekt automatisch naar terugkerende betalingen "
+    "op basis van je transactiehistorie."
+)
+
+if st.button(
+    "🔍 Terugkerende transacties detecteren",
+    use_container_width=True
+):
+
+    recurring_transactions = (
+        detect_recurring_transactions(
+            transactions
+        )
+    )
+
+    st.session_state[
+        "detected_recurring_transactions"
+    ] = recurring_transactions
+
+
+# ------------------------------------------------------------
+# SHOW RESULTS
+# ------------------------------------------------------------
+
+if (
+    "detected_recurring_transactions"
+    in st.session_state
+):
+
+    recurring_transactions = (
+        st.session_state[
+            "detected_recurring_transactions"
+        ]
+    )
+
+    if recurring_transactions:
+
+        st.success(
+            f"✅ {len(recurring_transactions)} "
+            "mogelijke terugkerende betalingen gevonden."
+        )
+
+        recurring_df = pd.DataFrame(
+            recurring_transactions
+        )
+
+        recurring_df = recurring_df.rename(
+            columns={
+                "merchant": "Leverancier",
+                "category": "Categorie",
+                "frequency": "Frequentie",
+                "expected_amount": "Verwacht bedrag",
+                "occurrences": "Aantal keer",
+                "last_occurrence": "Laatste keer",
+                "next_occurrence": "Volgende keer",
+                "reliability": "Betrouwbaarheid"
+            }
+        )
+
+        st.dataframe(
+            recurring_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+    else:
+
+        st.info(
+            "Geen duidelijke terugkerende transacties gevonden."
+        )
 
 # ============================================================
 # DASHBOARD
