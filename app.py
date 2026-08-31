@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import hashlib
@@ -2240,4 +2239,3 @@ else:
     st.info(
         "Nog geen transacties voor deze rekening."
     )
-```
