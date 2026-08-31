@@ -245,7 +245,6 @@ def load_accounts(user_id):
 
         return []
 
-
 def load_transactions(
     user_id,
     account_id
