@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import hashlib
@@ -2597,4 +2596,3 @@ elif chapter == "⚙️ Instellingen":
     st.caption(
         "Financial Cockpit"
     )
-```
