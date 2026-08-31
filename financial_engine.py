@@ -1,6 +1,10 @@
 import pandas as pd
 
 
+# ============================================================
+# TRANSACTION PREPARATION
+# ============================================================
+
 def prepare_transactions(transactions):
     """
     Zet Supabase-transacties om naar een bruikbare DataFrame.
@@ -34,16 +38,22 @@ def prepare_transactions(transactions):
     return df
 
 
+# ============================================================
+# PERIOD METRICS
+# ============================================================
+
 def calculate_period_metrics(
     df,
     period=None
 ):
     """
-    Bereken inkomsten, uitgaven en netto resultaat
-    voor een bepaalde maand.
+    Bereken inkomsten, uitgaven en netto resultaat.
 
     period:
         pandas Period("2026-08", freq="M")
+
+    Als period=None wordt meegegeven,
+    wordt de volledige DataFrame gebruikt.
     """
 
     if df.empty:
@@ -81,12 +91,16 @@ def calculate_period_metrics(
     }
 
 
+# ============================================================
+# CATEGORY SPENDING
+# ============================================================
+
 def calculate_category_spending(
     df,
     period=None
 ):
     """
-    Geeft uitgaven per categorie terug.
+    Geeft totale uitgaven per categorie terug.
     """
 
     if df.empty:
@@ -119,6 +133,10 @@ def calculate_category_spending(
         .to_dict()
     )
 
+
+# ============================================================
+# BUDGET STATUS
+# ============================================================
 
 def calculate_budget_status(
     df,
@@ -156,7 +174,9 @@ def calculate_budget_status(
             )
         )
 
-        remaining = limit - spent
+        remaining = (
+            limit - spent
+        )
 
         percentage = (
             spent / limit * 100
@@ -175,11 +195,18 @@ def calculate_budget_status(
             }
         )
 
-    def calculate_monthly_recurring_cost(
+    return results
+
+
+# ============================================================
+# RECURRING COSTS
+# ============================================================
+
+def calculate_monthly_recurring_cost(
     recurring_transactions
 ):
     """
-    Zet alle recurring payments om naar
+    Zet actieve recurring payments om naar
     een geschatte maandelijkse kostenpost.
     """
 
@@ -228,5 +255,3 @@ def calculate_budget_status(
             )
 
     return float(monthly_cost)
-
-    return results
