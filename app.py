@@ -1710,6 +1710,65 @@ budgets = load_budgets(
     user_id
 )
 
+def save_recurring_transactions(
+    user_id,
+    account_id,
+    recurring_transactions
+):
+
+    if not recurring_transactions:
+        return []
+
+    records = []
+
+    for recurring in recurring_transactions:
+
+        records.append(
+            {
+                "user_id": user_id,
+                "account_id": account_id,
+                "merchant": recurring["merchant"],
+                "category": recurring["category"],
+                "frequency": recurring["frequency"],
+                "expected_amount": float(
+                    recurring["expected_amount"]
+                ),
+                "last_occurrence": recurring[
+                    "last_occurrence"
+                ],
+                "next_occurrence": recurring[
+                    "next_occurrence"
+                ],
+                "active": True
+            }
+        )
+
+    try:
+
+        result = (
+            supabase
+            .table("recurring_transactions")
+            .upsert(
+                records,
+                on_conflict=(
+                    "user_id,"
+                    "account_id,"
+                    "merchant"
+                )
+            )
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as e:
+
+        st.error(
+            "❌ Terugkerende transacties konden "
+            f"niet worden opgeslagen: {e}"
+        )
+
+        return []
 
 # ============================================================
 # BUDGET INSTELLEN
