@@ -250,6 +250,29 @@ def load_transactions(
     account_id
 ):
 
+    try:
+
+        result = (
+            supabase
+            .table("transactions")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("account_id", account_id)
+            .order("date", desc=True)
+            .execute()
+        )
+
+        return result.data or []
+
+    except Exception as e:
+
+        st.error(
+            f"❌ Transacties konden niet worden geladen: {e}"
+        )
+
+        return []
+
+
 def detect_recurring_transactions(transactions):
 
     if not transactions:
@@ -268,6 +291,7 @@ def detect_recurring_transactions(transactions):
     ]
 
     for column in required_columns:
+
         if column not in df.columns:
             return []
 
@@ -315,8 +339,9 @@ def detect_recurring_transactions(transactions):
     if df.empty:
         return []
 
-    # Gebruik absolute bedragen
-    df["amount_abs"] = df["amount"].abs()
+    df["amount_abs"] = (
+        df["amount"].abs()
+    )
 
     recurring = []
 
@@ -329,37 +354,48 @@ def detect_recurring_transactions(transactions):
         if len(group) < 2:
             continue
 
-        group = group.sort_values("date").copy()
+        group = group.sort_values(
+            "date"
+        ).copy()
 
-        dates = list(group["date"])
+        dates = list(
+            group["date"]
+        )
 
         amounts = list(
             group["amount_abs"]
         )
 
         # ----------------------------------------------------
-        # CHECK FREQUENCY
+        # INTERVALS
         # ----------------------------------------------------
 
         intervals = []
 
-        for i in range(1, len(dates)):
+        for i in range(
+            1,
+            len(dates)
+        ):
 
             days = (
-                dates[i] - dates[i - 1]
+                dates[i]
+                - dates[i - 1]
             ).days
 
-            intervals.append(days)
+            intervals.append(
+                days
+            )
 
         if not intervals:
             continue
 
-        average_interval = sum(
-            intervals
-        ) / len(intervals)
+        average_interval = (
+            sum(intervals)
+            / len(intervals)
+        )
 
         # ----------------------------------------------------
-        # DETERMINE FREQUENCY
+        # FREQUENCY
         # ----------------------------------------------------
 
         if 25 <= average_interval <= 35:
@@ -383,18 +419,22 @@ def detect_recurring_transactions(transactions):
             continue
 
         # ----------------------------------------------------
-        # CHECK AMOUNT CONSISTENCY
+        # AMOUNT CONSISTENCY
         # ----------------------------------------------------
 
-        average_amount = sum(
-            amounts
-        ) / len(amounts)
+        average_amount = (
+            sum(amounts)
+            / len(amounts)
+        )
 
         if average_amount == 0:
             continue
 
         max_difference = max(
-            abs(amount - average_amount)
+            abs(
+                amount
+                - average_amount
+            )
             for amount in amounts
         )
 
@@ -403,7 +443,6 @@ def detect_recurring_transactions(transactions):
             / average_amount
         )
 
-        # Allow up to 15% variation
         if percentage_difference <= 0.15:
 
             reliability = "Hoog"
@@ -447,7 +486,9 @@ def detect_recurring_transactions(transactions):
         next_date = (
             last_date
             + pd.Timedelta(
-                days=round(average_interval)
+                days=round(
+                    average_interval
+                )
             )
         )
 
@@ -460,7 +501,9 @@ def detect_recurring_transactions(transactions):
                     average_amount,
                     2
                 ),
-                "occurrences": len(group),
+                "occurrences": len(
+                    group
+                ),
                 "last_occurrence":
                     last_date.strftime(
                         "%Y-%m-%d"
@@ -469,33 +512,12 @@ def detect_recurring_transactions(transactions):
                     next_date.strftime(
                         "%Y-%m-%d"
                     ),
-                "reliability": reliability
+                "reliability":
+                    reliability
             }
         )
 
     return recurring
-
-    try:
-
-        result = (
-            supabase
-            .table("transactions")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("account_id", account_id)
-            .order("date", desc=True)
-            .execute()
-        )
-
-        return result.data or []
-
-    except Exception as e:
-
-        st.error(
-            f"❌ Transacties konden niet worden geladen: {e}"
-        )
-
-        return []
 
 
 def load_budgets(user_id):
