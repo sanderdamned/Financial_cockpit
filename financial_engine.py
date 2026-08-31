@@ -1,4 +1,3 @@
-```python
 import pandas as pd
 
 
@@ -686,4 +685,3 @@ def calculate_safe_to_spend(
         0.0,
         safe_amount,
     )
-```
