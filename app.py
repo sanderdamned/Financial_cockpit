@@ -251,6 +251,231 @@ def load_transactions(
     account_id
 ):
 
+def detect_recurring_transactions(transactions):
+
+    if not transactions:
+        return []
+
+    df = pd.DataFrame(transactions)
+
+    if df.empty:
+        return []
+
+    required_columns = [
+        "date",
+        "merchant",
+        "amount",
+        "flow"
+    ]
+
+    for column in required_columns:
+        if column not in df.columns:
+            return []
+
+    # --------------------------------------------------------
+    # CLEAN DATA
+    # --------------------------------------------------------
+
+    df = df.copy()
+
+    df["date"] = pd.to_datetime(
+        df["date"],
+        errors="coerce"
+    )
+
+    df["amount"] = pd.to_numeric(
+        df["amount"],
+        errors="coerce"
+    )
+
+    df["merchant"] = (
+        df["merchant"]
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    df = df[
+        df["date"].notna()
+        & df["amount"].notna()
+        & df["merchant"].notna()
+        & (df["merchant"] != "")
+    ].copy()
+
+    if df.empty:
+        return []
+
+    # --------------------------------------------------------
+    # ONLY EXPENSES
+    # --------------------------------------------------------
+
+    df = df[
+        df["flow"] == "Uitgave"
+    ].copy()
+
+    if df.empty:
+        return []
+
+    # Gebruik absolute bedragen
+    df["amount_abs"] = df["amount"].abs()
+
+    recurring = []
+
+    # --------------------------------------------------------
+    # ANALYSE PER MERCHANT
+    # --------------------------------------------------------
+
+    for merchant, group in df.groupby("merchant"):
+
+        if len(group) < 2:
+            continue
+
+        group = group.sort_values("date").copy()
+
+        dates = list(group["date"])
+
+        amounts = list(
+            group["amount_abs"]
+        )
+
+        # ----------------------------------------------------
+        # CHECK FREQUENCY
+        # ----------------------------------------------------
+
+        intervals = []
+
+        for i in range(1, len(dates)):
+
+            days = (
+                dates[i] - dates[i - 1]
+            ).days
+
+            intervals.append(days)
+
+        if not intervals:
+            continue
+
+        average_interval = sum(
+            intervals
+        ) / len(intervals)
+
+        # ----------------------------------------------------
+        # DETERMINE FREQUENCY
+        # ----------------------------------------------------
+
+        if 25 <= average_interval <= 35:
+
+            frequency = "Maandelijks"
+
+        elif 6 <= average_interval <= 8:
+
+            frequency = "Wekelijks"
+
+        elif 80 <= average_interval <= 100:
+
+            frequency = "Per kwartaal"
+
+        elif 350 <= average_interval <= 380:
+
+            frequency = "Jaarlijks"
+
+        else:
+
+            continue
+
+        # ----------------------------------------------------
+        # CHECK AMOUNT CONSISTENCY
+        # ----------------------------------------------------
+
+        average_amount = sum(
+            amounts
+        ) / len(amounts)
+
+        if average_amount == 0:
+            continue
+
+        max_difference = max(
+            abs(amount - average_amount)
+            for amount in amounts
+        )
+
+        percentage_difference = (
+            max_difference
+            / average_amount
+        )
+
+        # Allow up to 15% variation
+        if percentage_difference <= 0.15:
+
+            reliability = "Hoog"
+
+        elif percentage_difference <= 0.30:
+
+            reliability = "Gemiddeld"
+
+        else:
+
+            continue
+
+        # ----------------------------------------------------
+        # CATEGORY
+        # ----------------------------------------------------
+
+        category = "Overig"
+
+        if "category" in group.columns:
+
+            categories = (
+                group["category"]
+                .dropna()
+                .astype(str)
+            )
+
+            if not categories.empty:
+
+                category = (
+                    categories
+                    .mode()
+                    .iloc[0]
+                )
+
+        # ----------------------------------------------------
+        # NEXT OCCURRENCE
+        # ----------------------------------------------------
+
+        last_date = dates[-1]
+
+        next_date = (
+            last_date
+            + pd.Timedelta(
+                days=round(average_interval)
+            )
+        )
+
+        recurring.append(
+            {
+                "merchant": merchant,
+                "category": category,
+                "frequency": frequency,
+                "expected_amount": round(
+                    average_amount,
+                    2
+                ),
+                "occurrences": len(group),
+                "last_occurrence":
+                    last_date.strftime(
+                        "%Y-%m-%d"
+                    ),
+                "next_occurrence":
+                    next_date.strftime(
+                        "%Y-%m-%d"
+                    ),
+                "reliability": reliability
+            }
+        )
+
+    return recurring
+
     try:
 
         result = (
