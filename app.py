@@ -2196,6 +2196,74 @@ elif not budgets:
         "Je hebt nog geen budgetten ingesteld."
     )
 
+# ============================================================
+# TRANSACTION MANAGEMENT
+# ============================================================
+
+def update_transaction(
+    transaction_id,
+    category,
+    merchant=None,
+):
+    """
+    Werk een bestaande transactie bij.
+    """
+
+    try:
+
+        update_data = {
+            "category": category,
+        }
+
+        if merchant is not None:
+            update_data["merchant"] = merchant.strip()
+
+        result = (
+            supabase
+            .table("transactions")
+            .update(update_data)
+            .eq("id", transaction_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+        return result.data
+
+    except Exception as e:
+
+        st.error(
+            f"❌ Transactie kon niet worden bijgewerkt: {e}"
+        )
+
+        return None
+
+
+def delete_transaction(transaction_id):
+    """
+    Verwijder een transactie.
+    """
+
+    try:
+
+        result = (
+            supabase
+            .table("transactions")
+            .delete()
+            .eq("id", transaction_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+
+        return result.data
+
+    except Exception as e:
+
+        st.error(
+            f"❌ Transactie kon niet worden verwijderd: {e}"
+        )
+
+        return None
+
 
 # ============================================================
 # ALL TRANSACTIONS
@@ -2203,36 +2271,330 @@ elif not budgets:
 
 st.divider()
 
-st.header("💳 Mijn transacties")
+st.header(
+    "💳 Mijn transacties"
+)
 
 if transactions:
 
     transactions_display = pd.DataFrame(
         transactions
+    ).copy()
+
+    # --------------------------------------------------------
+    # PREPARE DATA
+    # --------------------------------------------------------
+
+    transactions_display["date"] = pd.to_datetime(
+        transactions_display["date"],
+        errors="coerce",
     )
 
-    display_columns = [
-        "date",
-        "description",
-        "merchant",
-        "amount",
-        "flow",
-        "category",
-    ]
-
-    available_columns = [
-        column
-        for column in display_columns
-        if column in transactions_display.columns
-    ]
-
-    st.dataframe(
-        transactions_display[
-            available_columns
-        ],
-        use_container_width=True,
-        hide_index=True,
+    transactions_display["amount"] = pd.to_numeric(
+        transactions_display["amount"],
+        errors="coerce",
     )
+
+    # --------------------------------------------------------
+    # FILTERS
+    # --------------------------------------------------------
+
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+
+    with filter_col1:
+
+        search_term = st.text_input(
+            "🔎 Zoek",
+            placeholder="Bijv. Albert Heijn",
+        )
+
+    with filter_col2:
+
+        categories_available = sorted(
+            transactions_display[
+                "category"
+            ]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+
+        selected_category = st.selectbox(
+            "Categorie",
+            ["Alle categorieën"]
+            + categories_available,
+        )
+
+    with filter_col3:
+
+        selected_flow = st.selectbox(
+            "Type",
+            [
+                "Alles",
+                "Inkomsten",
+                "Uitgaven",
+            ],
+        )
+
+    # --------------------------------------------------------
+    # APPLY FILTERS
+    # --------------------------------------------------------
+
+    filtered_df = transactions_display.copy()
+
+    if search_term:
+
+        search_mask = (
+            filtered_df[
+                "description"
+            ]
+            .astype(str)
+            .str.contains(
+                search_term,
+                case=False,
+                na=False,
+            )
+            |
+            filtered_df[
+                "merchant"
+            ]
+            .astype(str)
+            .str.contains(
+                search_term,
+                case=False,
+                na=False,
+            )
+        )
+
+        filtered_df = filtered_df[
+            search_mask
+        ]
+
+    if selected_category != "Alle categorieën":
+
+        filtered_df = filtered_df[
+            filtered_df["category"]
+            == selected_category
+        ]
+
+    if selected_flow == "Inkomsten":
+
+        filtered_df = filtered_df[
+            filtered_df["flow"]
+            == "Inkomst"
+        ]
+
+    elif selected_flow == "Uitgaven":
+
+        filtered_df = filtered_df[
+            filtered_df["flow"]
+            == "Uitgave"
+        ]
+
+    # --------------------------------------------------------
+    # RESULT COUNT
+    # --------------------------------------------------------
+
+    st.caption(
+        f"{len(filtered_df):,} transacties gevonden"
+    )
+
+    # --------------------------------------------------------
+    # TRANSACTION EDITOR
+    # --------------------------------------------------------
+
+    for _, transaction in filtered_df.iterrows():
+
+        transaction_id = transaction.get(
+            "id"
+        )
+
+        date = transaction.get(
+            "date"
+        )
+
+        description = str(
+            transaction.get(
+                "description",
+                "",
+            )
+        )
+
+        merchant = str(
+            transaction.get(
+                "merchant",
+                "",
+            )
+        )
+
+        amount = float(
+            transaction.get(
+                "amount",
+                0,
+            ) or 0
+        )
+
+        flow = transaction.get(
+            "flow",
+            "",
+        )
+
+        category = transaction.get(
+            "category",
+            "Overig",
+        )
+
+        # ----------------------------------------------------
+        # DISPLAY
+        # ----------------------------------------------------
+
+        with st.container(
+            border=True
+        ):
+
+            col1, col2, col3, col4 = st.columns(
+                [
+                    1.2,
+                    3,
+                    1.5,
+                    1.8,
+                ]
+            )
+
+            with col1:
+
+                if pd.notna(date):
+
+                    st.write(
+                        date.strftime(
+                            "%d-%m-%Y"
+                        )
+                    )
+
+            with col2:
+
+                st.markdown(
+                    f"**{merchant.title()}**"
+                )
+
+                if description != merchant:
+
+                    st.caption(
+                        description
+                    )
+
+            with col3:
+
+                if flow == "Inkomst":
+
+                    st.metric(
+                        "Bedrag",
+                        euro(amount),
+                    )
+
+                else:
+
+                    st.metric(
+                        "Bedrag",
+                        euro(abs(amount)),
+                    )
+
+            with col4:
+
+                if flow == "Inkomst":
+
+                    st.success(
+                        "Inkomst"
+                    )
+
+                else:
+
+                    st.caption(
+                        "Uitgave"
+                    )
+
+            # ------------------------------------------------
+            # EDIT
+            # ------------------------------------------------
+
+            edit_col1, edit_col2, edit_col3 = st.columns(
+                [
+                    3,
+                    3,
+                    1.5,
+                ]
+            )
+
+            with edit_col1:
+
+                new_category = st.selectbox(
+                    "Categorie",
+                    CATEGORIES,
+                    index=(
+                        CATEGORIES.index(category)
+                        if category in CATEGORIES
+                        else CATEGORIES.index("Overig")
+                    ),
+                    key=f"category_{transaction_id}",
+                )
+
+            with edit_col2:
+
+                new_merchant = st.text_input(
+                    "Merchant",
+                    value=merchant,
+                    key=f"merchant_{transaction_id}",
+                )
+
+            with edit_col3:
+
+                st.write("")
+
+                if st.button(
+                    "💾 Opslaan",
+                    key=f"save_transaction_{transaction_id}",
+                    use_container_width=True,
+                ):
+
+                    result = update_transaction(
+                        transaction_id,
+                        new_category,
+                        new_merchant,
+                    )
+
+                    if result is not None:
+
+                        st.success(
+                            "Opgeslagen"
+                        )
+
+                        st.rerun()
+
+            # ------------------------------------------------
+            # DELETE
+            # ------------------------------------------------
+
+            with st.expander(
+                "⚙️ Meer opties"
+            ):
+
+                if st.button(
+                    "🗑️ Transactie verwijderen",
+                    key=f"delete_transaction_{transaction_id}",
+                ):
+
+                    result = delete_transaction(
+                        transaction_id
+                    )
+
+                    if result is not None:
+
+                        st.success(
+                            "Transactie verwijderd."
+                        )
+
+                        st.rerun()
 
 else:
 
