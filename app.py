@@ -48,7 +48,13 @@ supabase = get_supabase()
 # ============================================================
 
 CATEGORIES = [
-    "Inkomen",
+    "Salaris",
+    "Belasting",
+    "Rente",
+    "Overboeking spaargeld",
+    "Tikkies",
+    "Overige inkomsten",
+
     "Boodschappen",
     "Wonen",
     "Telecom",
@@ -69,50 +75,83 @@ CATEGORIES = [
 
 
 CATEGORY_RULES = {
+    # Inkomsten
+    "Salaris": [
+        "salaris",
+        "loon",
+        "salary",
+        "payroll",
+        "wage",
+    ],
 
+    "Belasting": [
+        "belastingdienst",
+        "belasting terug",
+        "teruggave belasting",
+        "inkomstenbelasting",
+        "toeslag",
+    ],
+
+    "Rente": [
+        "rente",
+        "interest",
+        "spaarrente",
+    ],
+
+    "Overboeking spaargeld": [
+        "spaarrekening",
+        "spaarrekening",
+        "sparen",
+        "overboeking sparen",
+        "overboeking spaargeld",
+    ],
+
+    "Tikkies": [
+        "tikkie",
+        "tikkies",
+        "betaalverzoek",
+    ],
+
+    "Overige inkomsten": [
+        "inkomsten",
+        "ontvangst",
+        "uitbetaling",
+        "vergoeding",
+    ],
+
+    # Uitgaven
     "Boodschappen": [
         "albert heijn",
-        "albert heijn online",
         "ah ",
         "jumbo",
-        "plus",
         "lidl",
         "aldi",
+        "plus",
         "dirk",
-        "coop",
-        "supermarkt",
-        "picnic",
         "hoogvliet",
         "vomar",
-        "spar",
+        "coop",
     ],
 
     "Telecom": [
-        "ziggo",
-        "t-mobile",
-        "tmobile",
-        "odido",
         "kpn",
         "vodafone",
+        "ziggo",
+        "t-mobile",
+        "odido",
         "tele2",
-        "ben",
-        "simyo",
     ],
 
     "Vervoer": [
         "shell",
+        "bp ",
         "esso",
-        "bp",
         "total",
-        "texaco",
+        "q8",
+        "parking",
+        "parkeren",
         "ns ",
-        "ns international",
         "ov-chipkaart",
-        "uber",
-        "bolt",
-        "anwb",
-        "q-park",
-        "parkmobile",
     ],
 
     "Horeca": [
@@ -120,91 +159,86 @@ CATEGORY_RULES = {
         "cafe",
         "café",
         "mcdonald",
-        "burger king",
         "starbucks",
         "thuisbezorgd",
         "uber eats",
-        "deliveroo",
     ],
 
     "Entertainment": [
-        "netflix",
         "spotify",
-        "disney",
-        "prime video",
+        "netflix",
         "pathe",
         "bioscoop",
-        "youtube",
-        "apple music",
+        "steam",
+        "playstation",
     ],
 
     "Abonnementen": [
         "subscription",
-        "membership",
         "abonnement",
+        "amazon prime",
+        "disney",
+        "apple.com/bill",
     ],
 
     "Wonen": [
-        "vattenfall",
-        "essent",
-        "eneco",
-        "huur",
         "hypotheek",
-        "waternet",
+        "huur",
+        "energie",
+        "water",
+        "vitens",
+        "essent",
+        "vandebron",
     ],
 
     "Verzekeringen": [
         "verzekering",
         "verzekeringen",
         "achmea",
-        "interpolis",
-        "ohra",
         "aegon",
+        "interpolis",
     ],
 
     "Gezondheid": [
         "apotheek",
+        "huisarts",
         "ziekenhuis",
         "tandarts",
-        "dokter",
-        "huisarts",
+        "fysio",
     ],
 
     "Kleding": [
         "zara",
         "h&m",
         "uniqlo",
-        "nike",
-        "adidas",
+        "zalando",
+        "we fashion",
     ],
 
     "Persoonlijke verzorging": [
-        "kapper",
-        "barber",
         "rituals",
+        "kapper",
+        "kapsalon",
         "douglas",
         "ici paris",
     ],
 
     "Kinderen": [
-        "school",
         "kinderopvang",
-        "creche",
+        "school",
+        "bsо",
         "crèche",
-        "kinderdagverblijf",
+        "creche",
     ],
 
     "Vakantie": [
         "booking.com",
         "airbnb",
         "hotel",
-        "camping",
-    ],
-
-    "Inkomen": [
-        "salaris",
-        "salary",
-        "loon",
+        "vakantie",
+        "transavia",
+        "klm",
+        "ryanair",
     ],
 }
 
