@@ -1,4 +1,3 @@
-import streamlit as st
 import pandas as pd
 import hashlib
 from supabase import create_client
@@ -207,14 +206,6 @@ CATEGORY_RULES = {
 
 
 # ============================================================
-# SESSION STATE
-# ============================================================
-
-if "merchant_category_rules" not in st.session_state:
-    st.session_state.merchant_category_rules = {}
-
-
-# ============================================================
 # HELPERS
 # ============================================================
 
@@ -232,55 +223,50 @@ def euro(value):
         return "€ 0,00"
 
 
-def categorize_transaction(description):
+def categorize_transaction(description, merchant=None, merchant_rules=None):
 
     text = str(description).lower()
+    normalized = str(merchant or "").lower().strip()
+    merchant_rules = merchant_rules or {}
 
     # --------------------------------------------------------
-    # MANUAL RULES HAVE PRIORITY
+    # PERSISTENT USER RULES HAVE PRIORITY
     # --------------------------------------------------------
-
-    for merchant, category in (
-        st.session_state.merchant_category_rules.items()
-    ):
-
-        if merchant.lower() in text:
+    for rule_merchant, category in merchant_rules.items():
+        rule = str(rule_merchant).lower().strip()
+        if rule and (rule in normalized or rule in text):
             return category
 
     # --------------------------------------------------------
     # DEFAULT RULES
     # --------------------------------------------------------
-
     for category, keywords in CATEGORY_RULES.items():
-
         for keyword in keywords:
-
             if keyword.lower() in text:
                 return category
 
     return "Overig"
 
 
-def normalize_merchant(description):
+def normalize_merchant(description, merchant_rules=None):
 
     text = str(description).lower().strip()
+    merchant_rules = merchant_rules or {}
 
-    # Manual merchant rules first
-    for merchant in st.session_state.merchant_category_rules:
-
-        if merchant.lower() in text:
-            return merchant.lower()
+    # User-defined merchant names first. This means a rule such as
+    # "bol.com" also becomes the canonical merchant name.
+    for merchant in merchant_rules:
+        merchant = str(merchant).lower().strip()
+        if merchant and merchant in text:
+            return merchant
 
     # Known merchants
     for keywords in CATEGORY_RULES.values():
-
         for keyword in keywords:
-
             if keyword.lower() in text:
                 return keyword.strip().lower()
 
     return text
-
 
 def create_transaction_hash(
     transaction_date,
@@ -304,6 +290,92 @@ def create_transaction_hash(
 # ============================================================
 # DATABASE
 # ============================================================
+
+def load_merchant_category_rules(user_id):
+    """Load persistent merchant -> category rules for the logged-in user."""
+    try:
+        result = (
+            supabase
+            .table("merchant_category_rules")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("merchant")
+            .execute()
+        )
+        return {
+            str(row["merchant"]).lower().strip(): row["category"]
+            for row in (result.data or [])
+            if row.get("merchant")
+        }
+    except Exception as e:
+        st.error(f"❌ Categorieregels konden niet worden geladen: {e}")
+        return {}
+
+
+def save_merchant_category_rule(user_id, merchant, category):
+    """Create or update a persistent merchant categorisation rule."""
+    merchant = str(merchant).strip().lower()
+    if not merchant:
+        return None
+
+    try:
+        result = (
+            supabase
+            .table("merchant_category_rules")
+            .upsert(
+                {
+                    "user_id": user_id,
+                    "merchant": merchant,
+                    "category": category,
+                    "updated_at": pd.Timestamp.utcnow().isoformat(),
+                },
+                on_conflict="user_id,merchant",
+            )
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        st.error(f"❌ Categorieregel kon niet worden opgeslagen: {e}")
+        return None
+
+
+def delete_merchant_category_rule(user_id, merchant):
+    merchant = str(merchant).strip().lower()
+    try:
+        result = (
+            supabase
+            .table("merchant_category_rules")
+            .delete()
+            .eq("user_id", user_id)
+            .eq("merchant", merchant)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        st.error(f"❌ Categorieregel kon niet worden verwijderd: {e}")
+        return None
+
+
+def update_transactions_for_merchant(user_id, merchant, category):
+    """Apply a merchant rule to all matching transactions of this user."""
+    merchant = str(merchant).strip().lower()
+    if not merchant:
+        return None
+
+    try:
+        result = (
+            supabase
+            .table("transactions")
+            .update({"category": category})
+            .eq("user_id", user_id)
+            .eq("merchant", merchant)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        st.error(f"❌ Bestaande transacties konden niet worden bijgewerkt: {e}")
+        return None
+
 
 def load_accounts(user_id):
 
@@ -351,6 +423,23 @@ def load_transactions(user_id, account_id):
             f"❌ Transacties konden niet worden geladen: {e}"
         )
 
+        return []
+
+
+def load_all_transactions(user_id):
+    """Load all transactions for the user, across all bank accounts."""
+    try:
+        result = (
+            supabase
+            .table("transactions")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("date", desc=True)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        st.error(f"❌ Alle transacties konden niet worden geladen: {e}")
         return []
 
 
@@ -946,6 +1035,8 @@ except Exception:
 
 user = st.session_state["user"]
 user_id = user.id
+
+merchant_category_rules = load_merchant_category_rules(user_id)
 
 
 # ============================================================
@@ -1617,13 +1708,19 @@ elif chapter == "💳 Transacties":
                 df["merchant"] = df[
                     description_column
                 ].apply(
-                    normalize_merchant
+                    lambda value: normalize_merchant(
+                        value,
+                        merchant_category_rules,
+                    )
                 )
 
-                df["category"] = df[
-                    description_column
-                ].apply(
-                    categorize_transaction
+                df["category"] = df.apply(
+                    lambda row: categorize_transaction(
+                        row[description_column],
+                        row["merchant"],
+                        merchant_category_rules,
+                    ),
+                    axis=1,
                 )
 
                 # ------------------------------------------------
@@ -1850,60 +1947,37 @@ elif chapter == "💳 Transacties":
 elif chapter == "🏷️ Categorieën":
 
     st.title("🏷️ Categorieën")
+    st.caption("Categoriseer je uitgaven eenvoudig per winkel of organisatie.")
 
-    st.caption(
-        "Categoriseer je uitgaven eenvoudig per winkel of organisatie."
-    )
+    all_transactions = load_all_transactions(user_id)
 
-    if not transactions:
-
-        st.info(
-            "Importeer eerst transacties."
-        )
-
+    if not all_transactions:
+        st.info("Importeer eerst transacties.")
         st.stop()
 
-    df = pd.DataFrame(
-        transactions
-    )
-
-    df["amount"] = pd.to_numeric(
-        df["amount"],
-        errors="coerce",
-    )
-
-    expenses = df[
-        df["flow"] == "Uitgave"
-    ].copy()
+    df = pd.DataFrame(all_transactions)
+    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+    expenses = df[df["flow"] == "Uitgave"].copy()
 
     if expenses.empty:
-
-        st.info(
-            "Geen uitgaven gevonden."
-        )
-
+        st.info("Geen uitgaven gevonden.")
         st.stop()
-
-    # --------------------------------------------------------
-    # EXPLANATION
-    # --------------------------------------------------------
 
     st.info(
         "💡 Kies bijvoorbeeld **Albert Heijn → Boodschappen**. "
-        "Financial Cockpit past die categorie toe op alle "
-        "Albert Heijn-transacties."
+        "Deze keuze wordt permanent opgeslagen en toegepast op "
+        "alle huidige én toekomstige transacties van deze merchant, "
+        "ook op andere bankrekeningen."
     )
 
     # --------------------------------------------------------
     # MERCHANT SUMMARY
     # --------------------------------------------------------
-
+    # Group by merchant only. A merchant therefore appears once,
+    # even when historical transactions currently have different categories.
     merchant_summary = (
         expenses
-        .groupby(
-            ["merchant", "category"],
-            dropna=False,
-        )
+        .groupby("merchant", dropna=False)
         .agg(
             transactions=("amount", "count"),
             total=("amount", lambda x: x.abs().sum()),
@@ -1911,232 +1985,192 @@ elif chapter == "🏷️ Categorieën":
         .reset_index()
     )
 
-    merchant_summary = merchant_summary.sort_values(
-        "total",
-        ascending=False,
+    def merchant_current_category(merchant):
+        merchant = str(merchant).lower().strip()
+        if merchant in merchant_category_rules:
+            return merchant_category_rules[merchant]
+
+        categories = (
+            expenses.loc[
+                expenses["merchant"].astype(str).str.lower().str.strip() == merchant,
+                "category",
+            ]
+            .dropna()
+            .astype(str)
+        )
+        if categories.empty:
+            return "Overig"
+        modes = categories.mode()
+        return modes.iloc[0] if not modes.empty else "Overig"
+
+    merchant_summary["current_category"] = merchant_summary["merchant"].apply(
+        merchant_current_category
     )
+    merchant_summary = merchant_summary.sort_values("total", ascending=False)
 
     # --------------------------------------------------------
-    # FILTER
+    # FILTERS
     # --------------------------------------------------------
-
-    search = st.text_input(
-        "🔎 Zoek winkel of organisatie",
-        placeholder="Bijvoorbeeld Albert Heijn",
-    )
+    col1, col2 = st.columns([3, 1.5])
+    with col1:
+        search = st.text_input(
+            "🔎 Zoek winkel of organisatie",
+            placeholder="Bijvoorbeeld Albert Heijn",
+        )
+    with col2:
+        only_rules = st.checkbox("Alleen mijn regels")
 
     if search:
-
         merchant_summary = merchant_summary[
-            merchant_summary["merchant"]
-            .astype(str)
-            .str.contains(
-                search,
-                case=False,
-                na=False,
+            merchant_summary["merchant"].astype(str).str.contains(
+                search, case=False, na=False, regex=False
             )
         ]
 
-    st.subheader(
-        "🏪 Winkels & organisaties"
-    )
+    if only_rules:
+        merchant_summary = merchant_summary[
+            merchant_summary["merchant"].astype(str).str.lower().isin(
+                merchant_category_rules.keys()
+            )
+        ]
+
+    st.subheader("🏪 Winkels & organisaties")
 
     if merchant_summary.empty:
-
-        st.info(
-            "Geen merchants gevonden."
-        )
-
+        st.info("Geen merchants gevonden.")
     else:
+        for index, row in merchant_summary.reset_index(drop=True).iterrows():
+            merchant = str(row["merchant"]).strip().lower()
+            current_category = str(row["current_category"])
+            total = abs(float(row["total"]))
+            count = int(row["transactions"])
+            rule_exists = merchant in merchant_category_rules
 
-        for _, row in merchant_summary.iterrows():
-
-            merchant = str(
-                row["merchant"]
-            )
-
-            current_category = str(
-                row["category"]
-            )
-
-            total = abs(
-                float(row["total"])
-            )
-
-            count = int(
-                row["transactions"]
-            )
-
-            with st.container(
-                border=True
-            ):
-
-                col1, col2, col3, col4 = st.columns(
-                    [3, 1.5, 2, 2]
-                )
+            with st.container(border=True):
+                col1, col2, col3, col4 = st.columns([3, 1.5, 2, 1.8])
 
                 with col1:
-
-                    st.markdown(
-                        f"**{merchant.title()}**"
-                    )
-
-                    st.caption(
-                        f"{count} transacties · {euro(total)}"
-                    )
+                    st.markdown(f"**{merchant.title()}**")
+                    rule_label = " · vaste regel" if rule_exists else ""
+                    st.caption(f"{count} transacties · {euro(total)}{rule_label}")
 
                 with col2:
-
-                    st.caption(
-                        "Huidige categorie"
-                    )
-
-                    st.write(
-                        current_category
-                    )
+                    st.caption("Huidige categorie")
+                    st.write(current_category)
 
                 with col3:
-
+                    category_options = [
+                        c for c in CATEGORIES if c != "Inkomen"
+                    ]
                     new_category = st.selectbox(
                         "Nieuwe categorie",
-                        CATEGORIES,
+                        category_options,
                         index=(
-                            CATEGORIES.index(
-                                current_category
-                            )
-                            if current_category
-                            in CATEGORIES
-                            else CATEGORIES.index(
-                                "Overig"
-                            )
+                            category_options.index(current_category)
+                            if current_category in category_options
+                            else category_options.index("Overig")
                         ),
-                        key=f"category_{merchant}",
+                        key=f"category_{index}_{merchant}",
                         label_visibility="collapsed",
                     )
 
                 with col4:
-
                     if st.button(
                         "💾 Toepassen",
-                        key=f"save_category_{merchant}",
+                        key=f"save_category_{index}_{merchant}",
                         use_container_width=True,
+                        type="primary",
                     ):
+                        saved = save_merchant_category_rule(
+                            user_id, merchant, new_category
+                        )
 
-                        # Save rule for future imports
-                        st.session_state.merchant_category_rules[
-                            merchant.lower()
-                        ] = new_category
-
-                        # Update existing transactions
-                        try:
-
-                            result = (
-                                supabase
-                                .table("transactions")
-                                .update(
-                                    {
-                                        "category":
-                                            new_category
-                                    }
-                                )
-                                .eq(
-                                    "user_id",
-                                    user_id,
-                                )
-                                .eq(
-                                    "account_id",
-                                    selected_account_id,
-                                )
-                                .ilike(
-                                    "merchant",
-                                    f"%{merchant}%",
-                                )
-                                .execute()
+                        if saved is not None:
+                            updated = update_transactions_for_merchant(
+                                user_id, merchant, new_category
                             )
 
-                            st.success(
-                                f"✅ {merchant.title()} → {new_category}"
-                            )
-
-                            st.rerun()
-
-                        except Exception as e:
-
-                            st.error(
-                                f"❌ Categoriseren mislukt: {e}"
-                            )
+                            if updated is not None:
+                                st.success(
+                                    f"✅ {merchant.title()} → {new_category}. "
+                                    "Regel opgeslagen voor toekomstige imports."
+                                )
+                                st.rerun()
 
     # --------------------------------------------------------
-    # MANUAL RULES
+    # CUSTOM RULE
     # --------------------------------------------------------
-
     st.divider()
-
-    st.subheader(
-        "⚙️ Eigen categorisatieregel"
-    )
-
+    st.subheader("⚙️ Eigen categorisatieregel")
     st.caption(
-        "Gebruik dit bijvoorbeeld als een bank een merchantnaam "
-        "anders opslaat dan verwacht."
+        "Gebruik dit bijvoorbeeld als je bank een merchantnaam anders opslaat. "
+        "De regel wordt direct opgeslagen en toegepast op bestaande transacties."
     )
 
     with st.form("custom_category_rule"):
-
         custom_merchant = st.text_input(
             "Naam / herkenning",
             placeholder="bijvoorbeeld bol.com",
         )
-
         custom_category = st.selectbox(
             "Categorie",
-            [
-                c
-                for c in CATEGORIES
-                if c != "Inkomen"
-            ],
+            [c for c in CATEGORIES if c != "Inkomen"],
         )
-
         save_rule = st.form_submit_button(
             "➕ Regel toevoegen",
             use_container_width=True,
         )
 
         if save_rule:
-
-            if not custom_merchant.strip():
-
-                st.error(
-                    "Vul een merchantnaam in."
-                )
-
+            custom_merchant = custom_merchant.strip().lower()
+            if not custom_merchant:
+                st.error("Vul een merchantnaam in.")
             else:
-
-                st.session_state.merchant_category_rules[
-                    custom_merchant.lower().strip()
-                ] = custom_category
-
-                st.success(
-                    f"Regel opgeslagen: "
-                    f"{custom_merchant} → {custom_category}"
+                saved = save_merchant_category_rule(
+                    user_id, custom_merchant, custom_category
                 )
+                if saved is not None:
+                    updated = update_transactions_for_merchant(
+                        user_id, custom_merchant, custom_category
+                    )
+                    if updated is not None:
+                        st.success(
+                            f"✅ Regel opgeslagen: {custom_merchant.title()} → {custom_category}"
+                        )
+                        st.rerun()
 
-    if st.session_state.merchant_category_rules:
+    # --------------------------------------------------------
+    # PERSISTENT RULES
+    # --------------------------------------------------------
+    st.divider()
+    st.subheader("📌 Mijn eigen regels")
 
-        st.subheader(
-            "Mijn eigen regels"
-        )
-
-        for merchant, category in (
-            st.session_state.merchant_category_rules.items()
+    if not merchant_category_rules:
+        st.caption("Je hebt nog geen eigen categorisatieregels.")
+    else:
+        for rule_index, (merchant, category) in enumerate(
+            sorted(merchant_category_rules.items())
         ):
+            with st.container(border=True):
+                col1, col2, col3 = st.columns([3, 2, 1.2])
+                with col1:
+                    st.markdown(f"**{merchant.title()}**")
+                with col2:
+                    st.write(category)
+                with col3:
+                    if st.button(
+                        "🗑️ Verwijderen",
+                        key=f"delete_rule_{rule_index}_{merchant}",
+                        use_container_width=True,
+                    ):
+                        deleted = delete_merchant_category_rule(
+                            user_id, merchant
+                        )
+                        if deleted is not None:
+                            st.success(f"Regel voor {merchant.title()} verwijderd.")
+                            st.rerun()
 
-            st.write(
-                f"**{merchant.title()}** → {category}"
-            )
 
-
-# ============================================================
 # CHAPTER 4 — RECURRING
 # ============================================================
 
