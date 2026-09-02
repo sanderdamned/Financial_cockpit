@@ -1,4 +1,3 @@
-```python
 import pandas as pd
 import streamlit as st
 from supabase import create_client
@@ -2127,4 +2126,3 @@ PAGES = {
 
 
 PAGES[page]()
-```
