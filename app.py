@@ -1,4 +1,3 @@
-```python
 import io
 import hashlib
 
@@ -3226,4 +3225,3 @@ PAGES = {
 
 
 PAGES[page]()
-```
