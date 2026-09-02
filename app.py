@@ -1494,11 +1494,38 @@ def page_categories():
 # PAGE: RECURRING
 # ============================================================
 
-def page_recurring():
-
-    st.title(
-        "Terugkerend"
-    )
+metric_columns(
+    [
+        (
+            "Maandelijkse kosten",
+            euro(
+                calculate_monthly_recurring_cost(
+                    active
+                )
+            ),
+        ),
+        (
+            "Jaarlijkse kosten",
+            euro(
+                calculate_yearly_recurring_cost(
+                    active
+                )
+            ),
+        ),
+        (
+            "Actieve items",
+            str(
+                len(active)
+            ),
+        ),
+        (
+            "Inactieve items",
+            str(
+                len(inactive)
+            ),
+        ),
+    ]
+)
 
     # ========================================================
     # DETECT
