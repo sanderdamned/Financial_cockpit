@@ -164,11 +164,23 @@ def detect_recurring_transactions(df):
     """
     Detect recurring transactions.
 
-    Frequency:
-        25-35 days   = monthly
-        6-8 days     = weekly
-        80-100 days  = quarterly
-        350-380 days = yearly
+    Rules:
+
+    1. One-time transactions below €150:
+       - ignored completely
+
+    2. One-time transactions of €150 or more:
+       - treated as yearly recurring
+       - included in annual recurring expenses
+       - not treated as monthly recurring
+
+    3. Transactions occurring multiple times:
+       - existing recurring detection remains intact
+       - frequency is determined from transaction intervals
+
+    4. Low reliability recurring transactions:
+       - retained as detected data
+       - excluded from recurring financial calculations
     """
 
     if df is None or df.empty:
@@ -203,7 +215,7 @@ def detect_recurring_transactions(df):
         ]
     )
 
-    # Alleen uitgaven detecteren
+    # Alleen uitgaven
     data = data[
         data["flow"] == "Uitgave"
     ]
@@ -213,16 +225,86 @@ def detect_recurring_transactions(df):
 
     results = []
 
-    for merchant, group in data.groupby(
-        "merchant"
-    ):
+    for merchant, group in data.groupby("merchant"):
 
-        group = group.sort_values(
-            "date"
+        group = group.sort_values("date")
+
+        if group.empty:
+            continue
+
+        transaction_count = len(group)
+
+        amounts = group["amount"].abs()
+
+        mean_amount = float(
+            amounts.mean()
         )
 
-        if len(group) < 2:
+        if mean_amount == 0:
             continue
+
+        # ====================================================
+        # ONE-TIME TRANSACTION
+        # ====================================================
+
+        if transaction_count == 1:
+
+            amount = float(
+                amounts.iloc[0]
+            )
+
+            # Eenmalig < €150 volledig negeren
+            if amount < 150:
+                continue
+
+            transaction_date = group["date"].iloc[0]
+
+            # Eenmalig >= €150 behandelen als jaarlijkse
+            # terugkerende uitgave.
+            next_occurrence = (
+                transaction_date
+                + pd.DateOffset(years=1)
+            )
+
+            category = "Overig"
+
+            if (
+                "category" in group.columns
+                and not group["category"].mode().empty
+            ):
+                category = (
+                    group["category"]
+                    .mode()
+                    .iloc[0]
+                )
+
+            results.append(
+                {
+                    "merchant": merchant,
+                    "category": category,
+                    "frequency": "Jaarlijks",
+                    "expected_amount": amount,
+                    "last_occurrence": (
+                        transaction_date
+                        .date()
+                        .isoformat()
+                    ),
+                    "next_occurrence": (
+                        next_occurrence
+                        .date()
+                        .isoformat()
+                    ),
+                    "reliability": "Hoog",
+                    "flow": "Uitgave",
+                    "is_one_time_large": True,
+                }
+            )
+
+            continue
+
+        # ====================================================
+        # MULTIPLE TRANSACTIONS
+        # ====================================================
 
         dates = group["date"].tolist()
 
@@ -244,7 +326,10 @@ def detect_recurring_transactions(df):
             pd.Series(intervals).median()
         )
 
-        # Frequentie bepalen
+        # ====================================================
+        # FREQUENCY
+        # ====================================================
+
         if 25 <= median_interval <= 35:
 
             frequency = "Maandelijks"
@@ -268,14 +353,9 @@ def detect_recurring_transactions(df):
         else:
             continue
 
-        amounts = group["amount"].abs()
-
-        mean_amount = float(
-            amounts.mean()
-        )
-
-        if mean_amount == 0:
-            continue
+        # ====================================================
+        # AMOUNT VARIATION
+        # ====================================================
 
         variation = float(
             (
@@ -297,7 +377,10 @@ def detect_recurring_transactions(df):
 
             reliability = "Laag"
 
-        # Meest voorkomende categorie
+        # ====================================================
+        # CATEGORY
+        # ====================================================
+
         if (
             "category" in group.columns
             and not group["category"].mode().empty
@@ -312,6 +395,10 @@ def detect_recurring_transactions(df):
         else:
 
             category = "Overig"
+
+        # ====================================================
+        # OCCURRENCES
+        # ====================================================
 
         last_occurrence = group["date"].max()
 
@@ -338,6 +425,7 @@ def detect_recurring_transactions(df):
                 ),
                 "reliability": reliability,
                 "flow": "Uitgave",
+                "is_one_time_large": False,
             }
         )
 
