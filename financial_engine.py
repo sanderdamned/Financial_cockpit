@@ -11,8 +11,51 @@ def prepare_transactions(transactions):
     Convert raw Supabase transactions into a clean DataFrame.
     """
 
-    if not transactions:
+    if transactions is None:
         return pd.DataFrame()
+
+    if isinstance(transactions, pd.DataFrame):
+        if transactions.empty:
+            return pd.DataFrame()
+
+        df = transactions.copy()
+
+    else:
+        if not transactions:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(transactions)
+
+    if df.empty:
+        return df
+
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(
+            df["date"],
+            errors="coerce"
+        )
+
+    if "amount" in df.columns:
+        df["amount"] = pd.to_numeric(
+            df["amount"],
+            errors="coerce"
+        )
+
+    if "flow" not in df.columns:
+        df["flow"] = "Onbekend"
+
+    if "category" not in df.columns:
+        df["category"] = "Overig"
+
+    if "merchant" not in df.columns:
+        df["merchant"] = ""
+
+    df = df[
+        df["date"].notna() &
+        df["amount"].notna()
+    ].copy()
+
+    return df
 
     df = pd.DataFrame(transactions)
 
