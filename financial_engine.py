@@ -174,13 +174,22 @@ def detect_recurring_transactions(df):
        - included in annual recurring expenses
        - not treated as monthly recurring
 
-    3. Transactions occurring multiple times:
-       - existing recurring detection remains intact
-       - frequency is determined from transaction intervals
+    3. Multiple transactions:
+       - Weekly:
+         transaction must occur in at least 60% of the
+         relevant weeks.
 
-    4. Low reliability recurring transactions:
+       - Monthly:
+         transaction must either:
+         a) occur in at least 60% of the relevant weeks, OR
+         b) occur in each of the last 3 months.
+
+       - Quarterly / yearly:
+         existing interval-based detection remains intact.
+
+    4. Low reliability:
        - retained as detected data
-       - excluded from recurring financial calculations
+       - excluded from recurring financial calculations.
     """
 
     if df is None or df.empty:
@@ -225,9 +234,13 @@ def detect_recurring_transactions(df):
 
     results = []
 
+    # --------------------------------------------------------
+    # ANALYSE PER MERCHANT
+    # --------------------------------------------------------
+
     for merchant, group in data.groupby("merchant"):
 
-        group = group.sort_values("date")
+        group = group.sort_values("date").copy()
 
         if group.empty:
             continue
@@ -242,6 +255,337 @@ def detect_recurring_transactions(df):
 
         if mean_amount == 0:
             continue
+
+        # ====================================================
+        # ONE-TIME TRANSACTION
+        # ====================================================
+
+        if transaction_count == 1:
+
+            amount = float(
+                amounts.iloc[0]
+            )
+
+            # Eenmalig < €150 volledig negeren.
+            if amount < 150:
+                continue
+
+            transaction_date = group["date"].iloc[0]
+
+            # Eenmalig >= €150 behandelen als jaarlijkse
+            # uitgave.
+            next_occurrence = (
+                transaction_date
+                + pd.DateOffset(years=1)
+            )
+
+            if (
+                "category" in group.columns
+                and not group["category"].mode().empty
+            ):
+                category = (
+                    group["category"]
+                    .mode()
+                    .iloc[0]
+                )
+            else:
+                category = "Overig"
+
+            results.append(
+                {
+                    "merchant": merchant,
+                    "category": category,
+                    "frequency": "Jaarlijks",
+                    "expected_amount": amount,
+                    "last_occurrence": (
+                        transaction_date
+                        .date()
+                        .isoformat()
+                    ),
+                    "next_occurrence": (
+                        next_occurrence
+                        .date()
+                        .isoformat()
+                    ),
+                    "reliability": "Hoog",
+                    "flow": "Uitgave",
+                    "is_one_time_large": True,
+                }
+            )
+
+            continue
+
+        # ====================================================
+        # TIME COVERAGE
+        # ====================================================
+
+        first_date = group["date"].min()
+        last_date = group["date"].max()
+
+        # ----------------------------------------------------
+        # WEEK COVERAGE
+        # ----------------------------------------------------
+        #
+        # We gebruiken ISO-weken.
+        # Een week telt als "aanwezig" wanneer de merchant
+        # minimaal één keer in die week voorkomt.
+        #
+
+        group["week"] = (
+            group["date"]
+            .dt.to_period("W")
+        )
+
+        unique_weeks = (
+            group["week"]
+            .drop_duplicates()
+            .sort_values()
+        )
+
+        first_week = (
+            first_date
+            .to_period("W")
+        )
+
+        last_week = (
+            last_date
+            .to_period("W")
+        )
+
+        total_weeks = (
+            last_week.ordinal -
+            first_week.ordinal +
+            1
+        )
+
+        weeks_with_transaction = (
+            len(unique_weeks)
+        )
+
+        weekly_coverage = (
+            weeks_with_transaction /
+            total_weeks
+            if total_weeks > 0
+            else 0
+        )
+
+        weekly_60_percent = (
+            weekly_coverage >= 0.60
+        )
+
+        # ====================================================
+        # LAST 3 MONTHS
+        # ====================================================
+
+        group["month"] = (
+            group["date"]
+            .dt.to_period("M")
+        )
+
+        latest_month = (
+            last_date.to_period("M")
+        )
+
+        previous_month = (
+            latest_month - 1
+        )
+
+        two_months_ago = (
+            latest_month - 2
+        )
+
+        recent_months = {
+            latest_month,
+            previous_month,
+            two_months_ago,
+        }
+
+        months_with_transaction = set(
+            group["month"].drop_duplicates()
+        )
+
+        last_3_months_present = (
+            recent_months
+            .issubset(months_with_transaction)
+        )
+
+        # ====================================================
+        # FREQUENCY INTERVAL
+        # ====================================================
+
+        dates = group["date"].tolist()
+
+        intervals = [
+            (
+                dates[index]
+                - dates[index - 1]
+            ).days
+            for index in range(
+                1,
+                len(dates),
+            )
+        ]
+
+        if not intervals:
+            continue
+
+        median_interval = float(
+            pd.Series(intervals).median()
+        )
+
+        # ====================================================
+        # DETERMINE FREQUENCY
+        # ====================================================
+
+        frequency = None
+        days = None
+
+        # ----------------------------------------------------
+        # WEEKLY
+        # ----------------------------------------------------
+        #
+        # Eerst controleren op de 60%-regel.
+        #
+
+        if (
+            6 <= median_interval <= 8
+            and weekly_60_percent
+        ):
+
+            frequency = "Wekelijks"
+            days = 7
+
+        # ----------------------------------------------------
+        # MONTHLY
+        # ----------------------------------------------------
+        #
+        # Een maandelijkse transactie mag:
+        #
+        # 1. in minimaal 60% van de relevante weken voorkomen
+        # OF
+        # 2. in alle laatste 3 maanden voorkomen.
+        #
+        # Daarbij moet het interval nog wel ongeveer
+        # maandelijks zijn.
+        #
+
+        elif (
+            25 <= median_interval <= 35
+            and (
+                weekly_60_percent
+                or last_3_months_present
+            )
+        ):
+
+            frequency = "Maandelijks"
+            days = 30
+
+        # ----------------------------------------------------
+        # QUARTERLY
+        # ----------------------------------------------------
+
+        elif 80 <= median_interval <= 100:
+
+            frequency = "Per kwartaal"
+            days = 90
+
+        # ----------------------------------------------------
+        # YEARLY
+        # ----------------------------------------------------
+
+        elif 350 <= median_interval <= 380:
+
+            frequency = "Jaarlijks"
+            days = 365
+
+        # Geen herkenbaar patroon
+        else:
+            continue
+
+        # ====================================================
+        # AMOUNT VARIATION
+        # ====================================================
+
+        variation = float(
+            (
+                amounts.max()
+                - amounts.min()
+            )
+            / mean_amount
+        )
+
+        if variation <= 0.15:
+
+            reliability = "Hoog"
+
+        elif variation <= 0.30:
+
+            reliability = "Gemiddeld"
+
+        else:
+
+            reliability = "Laag"
+
+        # ====================================================
+        # CATEGORY
+        # ====================================================
+
+        if (
+            "category" in group.columns
+            and not group["category"].mode().empty
+        ):
+
+            category = (
+                group["category"]
+                .mode()
+                .iloc[0]
+            )
+
+        else:
+
+            category = "Overig"
+
+        # ====================================================
+        # OCCURRENCES
+        # ====================================================
+
+        last_occurrence = (
+            group["date"].max()
+        )
+
+        next_occurrence = (
+            last_occurrence
+            + pd.Timedelta(days=days)
+        )
+
+        # ====================================================
+        # RESULT
+        # ====================================================
+
+        results.append(
+            {
+                "merchant": merchant,
+                "category": category,
+                "frequency": frequency,
+                "expected_amount": mean_amount,
+                "last_occurrence": (
+                    last_occurrence
+                    .date()
+                    .isoformat()
+                ),
+                "next_occurrence": (
+                    next_occurrence
+                    .date()
+                    .isoformat()
+                ),
+                "reliability": reliability,
+                "flow": "Uitgave",
+                "is_one_time_large": False,
+            }
+        )
+
+    return results
+
 
         # ====================================================
         # ONE-TIME TRANSACTION
