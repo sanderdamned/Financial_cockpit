@@ -29,6 +29,7 @@ from financial_engine import (
     calculate_financial_health,
     calculate_safe_to_spend,
     calculate_monthly_recurring_cost,
+    calculate_yearly_recurring_cost,
     calculate_monthly_recurring_income,
 )
 
