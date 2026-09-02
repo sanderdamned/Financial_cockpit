@@ -179,13 +179,18 @@ def exclude_transfers(df):
 # MONTHLY METRICS
 # ============================================================
 
-def calculate_monthly_metrics(df, period=None, exclude_internal_transfers=True):
+def calculate_monthly_metrics(
+    df,
+    period=None,
+    exclude_internal_transfers=True
+):
 
     if df.empty:
         return {
             "income": 0.0,
             "expenses": 0.0,
             "net": 0.0,
+            "savings_rate": 0.0,
         }
 
     period_df = df.copy()
@@ -208,10 +213,19 @@ def calculate_monthly_metrics(df, period=None, exclude_internal_transfers=True):
         "amount"
     ].abs().sum()
 
+    net = income - expenses
+
+    savings_rate = (
+        (net / income) * 100
+        if income > 0
+        else 0.0
+    )
+
     return {
         "income": float(income),
         "expenses": float(expenses),
-        "net": float(income - expenses),
+        "net": float(net),
+        "savings_rate": float(savings_rate),
     }
 
 
