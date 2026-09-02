@@ -22,6 +22,7 @@ from ui_helpers import (
 from financial_engine import (
     prepare_transactions,
     detect_transfer_transactions,
+    detect_recurring_transactions,
     calculate_monthly_metrics,
     calculate_month_forecast,
     calculate_budget_status,
