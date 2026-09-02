@@ -685,6 +685,10 @@ def calculate_monthly_recurring_cost(
         if item.get("flow", "Uitgave") != "Uitgave":
             continue
 
+        # Lage betrouwbaarheid niet meenemen
+        if item.get("reliability") == "Laag":
+            continue
+
         amount = float(
             item.get("expected_amount", 0) or 0
         )
@@ -698,6 +702,38 @@ def calculate_monthly_recurring_cost(
         )
 
     return float(monthly_cost)
+
+# ============================================================
+# YEARLY RECURRING COST
+# ============================================================
+
+def calculate_yearly_recurring_cost(
+    recurring_transactions
+):
+
+    yearly_cost = 0.0
+
+    for item in recurring_transactions:
+
+        if not item.get("active", True):
+            continue
+
+        if item.get("flow", "Uitgave") != "Uitgave":
+            continue
+
+        if item.get("reliability") == "Laag":
+            continue
+
+        if item.get("frequency") != "Jaarlijks":
+            continue
+
+        amount = float(
+            item.get("expected_amount", 0) or 0
+        )
+
+        yearly_cost += amount
+
+    return float(yearly_cost)
 
 
 # ============================================================
