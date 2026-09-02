@@ -3659,7 +3659,6 @@ else:
 recurring_detected = detect_recurring_transactions(
     recurring_input
 )
-        )
 
         if detected:
 
