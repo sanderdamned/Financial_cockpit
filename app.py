@@ -1,3 +1,7 @@
+```python
+import io
+import hashlib
+
 import pandas as pd
 import streamlit as st
 from supabase import create_client
@@ -5,8 +9,6 @@ from supabase import create_client
 from categorization import (
     CATEGORIES,
     EXPENSE_CATEGORIES,
-    prepare_import_dataframe,
-    dataframe_to_transaction_records,
 )
 
 from database import Database
@@ -76,7 +78,7 @@ def db_call(
     **kwargs,
 ):
     """
-    Executes database function with user-friendly error handling.
+    Executes a database function with user-friendly error handling.
     """
 
     try:
@@ -181,6 +183,1053 @@ def load_recurring(
             account_id,
         )
         or []
+    )
+
+
+# ============================================================
+# ING CSV HELPERS
+# ============================================================
+
+def detect_csv_separator(
+    uploaded_file,
+):
+    """
+    Detecteert automatisch het CSV-scheidingsteken.
+
+    ING gebruikt afhankelijk van export/taalinstellingen
+    meestal ';' of ','.
+    """
+
+    raw = uploaded_file.getvalue()
+
+    encodings = [
+        "utf-8-sig",
+        "utf-8",
+        "cp1252",
+        "latin-1",
+    ]
+
+    text = None
+
+    for encoding in encodings:
+
+        try:
+
+            text = raw.decode(
+                encoding
+            )
+
+            break
+
+        except UnicodeDecodeError:
+
+            continue
+
+    if text is None:
+
+        text = raw.decode(
+            "utf-8",
+            errors="replace",
+        )
+
+    lines = text.splitlines()
+
+    if not lines:
+
+        raise ValueError(
+            "Het CSV-bestand is leeg."
+        )
+
+    first_line = lines[0]
+
+    candidates = [
+        ";",
+        ",",
+        "\t",
+    ]
+
+    counts = {
+        separator: first_line.count(
+            separator
+        )
+        for separator in candidates
+    }
+
+    separator = max(
+        counts,
+        key=counts.get,
+    )
+
+    if counts[separator] == 0:
+
+        raise ValueError(
+            "Geen geldig CSV-scheidingsteken gevonden."
+        )
+
+    return separator
+
+
+def read_csv_with_encoding(
+    uploaded_file,
+    separator,
+):
+    """
+    Leest het CSV-bestand met verschillende
+    gangbare ING-encodings.
+    """
+
+    raw = uploaded_file.getvalue()
+
+    last_error = None
+
+    for encoding in [
+        "utf-8-sig",
+        "utf-8",
+        "cp1252",
+        "latin-1",
+    ]:
+
+        try:
+
+            return pd.read_csv(
+                io.BytesIO(raw),
+                sep=separator,
+                encoding=encoding,
+                dtype=str,
+                keep_default_na=False,
+            )
+
+        except Exception as exc:
+
+            last_error = exc
+
+    raise ValueError(
+        f"CSV kon niet worden gelezen: {last_error}"
+    )
+
+
+def normalize_column_name(
+    value,
+):
+    """
+    Normaliseert kolomnamen zodat bijvoorbeeld:
+
+        'Date'
+        ' date '
+        'DATE'
+        '﻿Date'
+
+    allemaal gelijk behandeld worden.
+    """
+
+    return (
+        str(value)
+        .replace("\ufeff", "")
+        .strip()
+        .lower()
+    )
+
+
+def find_csv_column(
+    df,
+    candidates,
+):
+    """
+    Zoekt een kolom op basis van meerdere mogelijke
+    Nederlandse en Engelse namen.
+    """
+
+    columns = {
+        normalize_column_name(column): column
+        for column in df.columns
+    }
+
+    for candidate in candidates:
+
+        key = normalize_column_name(
+            candidate
+        )
+
+        if key in columns:
+
+            return columns[key]
+
+    return None
+
+
+def parse_ing_date(
+    value,
+):
+    """
+    Ondersteunt onder andere:
+
+        20260901
+        01/09/2026
+        01-09-2026
+        2026-09-01
+
+    Voor ING wordt eerst YYYYMMDD geprobeerd.
+    """
+
+    if pd.isna(value):
+
+        return pd.NaT
+
+    text = str(value).strip()
+
+    if not text:
+
+        return pd.NaT
+
+    # ING YYYYMMDD
+    if (
+        len(text) == 8
+        and text.isdigit()
+    ):
+
+        parsed = pd.to_datetime(
+            text,
+            format="%Y%m%d",
+            errors="coerce",
+        )
+
+        if not pd.isna(parsed):
+
+            return parsed
+
+    # Europese datumformaten
+    parsed = pd.to_datetime(
+        text,
+        errors="coerce",
+        dayfirst=True,
+    )
+
+    if not pd.isna(parsed):
+
+        return parsed
+
+    # Amerikaanse fallback
+    return pd.to_datetime(
+        text,
+        errors="coerce",
+        dayfirst=False,
+    )
+
+
+def parse_ing_amount(
+    value,
+):
+    """
+    Ondersteunt Nederlandse én Engelse bedragen.
+
+    Voorbeelden:
+
+        15,00
+        15.00
+        1.234,56
+        1,234.56
+        € 15,00
+        -15,00
+        -15.00
+    """
+
+    if pd.isna(value):
+
+        return None
+
+    text = str(value).strip()
+
+    if not text:
+
+        return None
+
+    # Valutasymbolen en whitespace verwijderen
+    text = (
+        text
+        .replace("€", "")
+        .replace("$", "")
+        .replace("£", "")
+        .replace("\u00a0", "")
+        .replace(" ", "")
+    )
+
+    if not text:
+
+        return None
+
+    # --------------------------------------------------------
+    # Zowel komma als punt
+    # --------------------------------------------------------
+
+    if "," in text and "." in text:
+
+        # Laatste separator is de decimale separator.
+        if text.rfind(",") > text.rfind("."):
+
+            # Nederlands:
+            # 1.234,56
+            text = text.replace(
+                ".",
+                "",
+            )
+
+            text = text.replace(
+                ",",
+                ".",
+            )
+
+        else:
+
+            # Engels:
+            # 1,234.56
+            text = text.replace(
+                ",",
+                "",
+            )
+
+    # --------------------------------------------------------
+    # Alleen komma
+    # --------------------------------------------------------
+
+    elif "," in text:
+
+        # ING NL:
+        # 1234,56
+        text = text.replace(
+            ",",
+            ".",
+        )
+
+    # --------------------------------------------------------
+    # Alleen punt
+    # --------------------------------------------------------
+
+    elif "." in text:
+
+        parts = text.split(".")
+
+        # Bijvoorbeeld:
+        # 1.234
+        # 12.345
+        # 1.234.567
+        #
+        # Wordt als duizendtalscheiding geïnterpreteerd.
+        if (
+            len(parts) > 2
+            or (
+                len(parts) == 2
+                and len(parts[1]) == 3
+                and len(parts[0]) <= 3
+            )
+        ):
+
+            text = "".join(
+                parts
+            )
+
+    try:
+
+        return float(
+            text
+        )
+
+    except (
+        ValueError,
+        TypeError,
+    ):
+
+        return None
+
+
+def normalize_flow(
+    value,
+):
+    """
+    Zet ING Debit/Credit naar het interne Financial Cockpit-formaat.
+
+    Engels:
+        Debit  -> Uitgave
+        Credit -> Inkomst
+
+    Nederlands:
+        Af     -> Uitgave
+        Bij    -> Inkomst
+    """
+
+    text = str(
+        value
+    ).strip().lower()
+
+    if text in [
+        "debit",
+        "debited",
+        "d",
+        "dr",
+        "af",
+        "afschrijving",
+    ]:
+
+        return "Uitgave"
+
+    if text in [
+        "credit",
+        "credited",
+        "c",
+        "cr",
+        "bij",
+        "bijschrijving",
+    ]:
+
+        return "Inkomst"
+
+    if text.startswith("debit"):
+
+        return "Uitgave"
+
+    if text.startswith("credit"):
+
+        return "Inkomst"
+
+    if text.startswith("af"):
+
+        return "Uitgave"
+
+    if text.startswith("bij"):
+
+        return "Inkomst"
+
+    return "Onbekend"
+
+
+def normalize_merchant(
+    description,
+    merchant_rules,
+):
+    """
+    Bepaalt de canonical merchantnaam.
+
+    Eerst worden gebruikersregels gebruikt.
+    Daarna bekende merchants.
+    """
+
+    text = str(
+        description
+    ).strip().lower()
+
+    merchant_rules = (
+        merchant_rules
+        or {}
+    )
+
+    # --------------------------------------------------------
+    # USER RULES
+    # --------------------------------------------------------
+
+    for merchant in merchant_rules:
+
+        merchant_text = str(
+            merchant
+        ).strip().lower()
+
+        if (
+            merchant_text
+            and merchant_text in text
+        ):
+
+            return merchant_text
+
+    # --------------------------------------------------------
+    # KNOWN MERCHANTS
+    # --------------------------------------------------------
+
+    known_merchants = {
+        "albert heijn": [
+            "albert heijn",
+            "ah ",
+            "ah",
+        ],
+        "jumbo": [
+            "jumbo",
+        ],
+        "lidl": [
+            "lidl",
+        ],
+        "aldi": [
+            "aldi",
+        ],
+        "plus": [
+            "plus",
+        ],
+        "picnic": [
+            "picnic",
+        ],
+        "netflix": [
+            "netflix",
+        ],
+        "spotify": [
+            "spotify",
+        ],
+        "disney": [
+            "disney",
+        ],
+        "youtube": [
+            "youtube",
+        ],
+        "apple": [
+            "apple",
+        ],
+        "ziggo": [
+            "ziggo",
+        ],
+        "kpn": [
+            "kpn",
+        ],
+        "odido": [
+            "odido",
+        ],
+        "vodafone": [
+            "vodafone",
+        ],
+        "anwb": [
+            "anwb",
+        ],
+        "shell": [
+            "shell",
+        ],
+        "esso": [
+            "esso",
+        ],
+        "bp": [
+            "bp",
+        ],
+        "uber": [
+            "uber",
+        ],
+        "bolt": [
+            "bolt",
+        ],
+        "booking.com": [
+            "booking.com",
+        ],
+        "airbnb": [
+            "airbnb",
+        ],
+        "rituals": [
+            "rituals",
+        ],
+        "douglas": [
+            "douglas",
+        ],
+        "zara": [
+            "zara",
+        ],
+        "nike": [
+            "nike",
+        ],
+        "adidas": [
+            "adidas",
+        ],
+        "h&m": [
+            "h&m",
+        ],
+    }
+
+    for merchant, keywords in (
+        known_merchants.items()
+    ):
+
+        for keyword in keywords:
+
+            if keyword in text:
+
+                return merchant
+
+    return text
+
+
+def categorize_import_transaction(
+    description,
+    merchant,
+    merchant_rules,
+):
+    """
+    Categoriseert een geïmporteerde transactie.
+
+    Merchantregels hebben voorrang.
+    """
+
+    description_text = str(
+        description
+    ).lower()
+
+    merchant_text = str(
+        merchant
+    ).lower()
+
+    merchant_rules = (
+        merchant_rules
+        or {}
+    )
+
+    # --------------------------------------------------------
+    # USER RULES
+    # --------------------------------------------------------
+
+    for rule_merchant, category in (
+        merchant_rules.items()
+    ):
+
+        rule = str(
+            rule_merchant
+        ).strip().lower()
+
+        if (
+            rule
+            and (
+                rule in description_text
+                or rule in merchant_text
+            )
+        ):
+
+            return category
+
+    # --------------------------------------------------------
+    # DEFAULT RULES
+    # --------------------------------------------------------
+
+    rules = {
+
+        "Boodschappen": [
+            "albert heijn",
+            "ah ",
+            "jumbo",
+            "plus",
+            "lidl",
+            "aldi",
+            "dirk",
+            "coop",
+            "supermarkt",
+            "picnic",
+            "hoogvliet",
+            "vomar",
+            "spar",
+        ],
+
+        "Telecom": [
+            "ziggo",
+            "t-mobile",
+            "tmobile",
+            "odido",
+            "kpn",
+            "vodafone",
+            "tele2",
+            "ben",
+            "simyo",
+        ],
+
+        "Vervoer": [
+            "shell",
+            "esso",
+            "bp",
+            "total",
+            "texaco",
+            "ns ",
+            "ns international",
+            "ov-chipkaart",
+            "uber",
+            "bolt",
+            "anwb",
+            "q-park",
+            "parkmobile",
+        ],
+
+        "Horeca": [
+            "restaurant",
+            "cafe",
+            "café",
+            "mcdonald",
+            "burger king",
+            "starbucks",
+            "thuisbezorgd",
+            "uber eats",
+            "deliveroo",
+        ],
+
+        "Entertainment": [
+            "netflix",
+            "spotify",
+            "disney",
+            "prime video",
+            "pathe",
+            "bioscoop",
+            "youtube",
+            "apple music",
+        ],
+
+        "Abonnementen": [
+            "subscription",
+            "membership",
+            "abonnement",
+        ],
+
+        "Wonen": [
+            "vattenfall",
+            "essent",
+            "eneco",
+            "huur",
+            "hypotheek",
+            "waternet",
+        ],
+
+        "Verzekeringen": [
+            "verzekering",
+            "verzekeringen",
+            "achmea",
+            "interpolis",
+            "ohra",
+            "aegon",
+        ],
+
+        "Gezondheid": [
+            "apotheek",
+            "ziekenhuis",
+            "tandarts",
+            "dokter",
+            "huisarts",
+        ],
+
+        "Kleding": [
+            "zara",
+            "h&m",
+            "uniqlo",
+            "nike",
+            "adidas",
+        ],
+
+        "Persoonlijke verzorging": [
+            "kapper",
+            "barber",
+            "rituals",
+            "douglas",
+            "ici paris",
+        ],
+
+        "Kinderen": [
+            "school",
+            "kinderopvang",
+            "creche",
+            "crèche",
+            "kinderdagverblijf",
+        ],
+
+        "Vakantie": [
+            "booking.com",
+            "airbnb",
+            "hotel",
+            "camping",
+        ],
+
+        "Inkomen": [
+            "salaris",
+            "salary",
+            "loon",
+        ],
+    }
+
+    for category, keywords in rules.items():
+
+        for keyword in keywords:
+
+            if keyword in description_text:
+
+                return category
+
+    return "Overig"
+
+
+def create_import_transaction_hash(
+    transaction_date,
+    description,
+    amount,
+    transaction_type,
+):
+    """
+    Maakt een stabiele hash voor duplicate protection.
+    """
+
+    raw = (
+        f"{transaction_date}|"
+        f"{description}|"
+        f"{amount}|"
+        f"{transaction_type}"
+    )
+
+    return hashlib.sha256(
+        raw.encode("utf-8")
+    ).hexdigest()
+
+
+def prepare_ing_csv(
+    uploaded_file,
+    merchant_rules,
+):
+    """
+    Complete ING CSV parser.
+
+    Ondersteunt zowel Nederlandse als Engelse ING-exporten.
+    """
+
+    separator = detect_csv_separator(
+        uploaded_file
+    )
+
+    df = read_csv_with_encoding(
+        uploaded_file,
+        separator,
+    )
+
+    if df.empty:
+
+        raise ValueError(
+            "Het CSV-bestand bevat geen transacties."
+        )
+
+    # Kolomnamen opschonen
+    df.columns = [
+        str(column)
+        .replace("\ufeff", "")
+        .strip()
+        for column in df.columns
+    ]
+
+    # --------------------------------------------------------
+    # FIND REQUIRED COLUMNS
+    # --------------------------------------------------------
+
+    date_column = find_csv_column(
+        df,
+        [
+            "Date",
+            "Datum",
+            "Transaction date",
+            "Transactiedatum",
+        ],
+    )
+
+    description_column = find_csv_column(
+        df,
+        [
+            "Name / Description",
+            "Name/Description",
+            "Name",
+            "Description",
+            "Omschrijving",
+            "Beschrijving",
+            "Naam",
+            "Details",
+            "Transaction",
+            "Transactie",
+        ],
+    )
+
+    debit_credit_column = find_csv_column(
+        df,
+        [
+            "Debit/credit",
+            "Debit / credit",
+            "Debit credit",
+            "Debit_credit",
+            "Af/Bij",
+            "Af / Bij",
+            "Af Bij",
+            "Afbij",
+            "Debit",
+            "Credit",
+        ],
+    )
+
+    amount_column = find_csv_column(
+        df,
+        [
+            "Amount (EUR)",
+            "Amount EUR",
+            "Amount (Euro)",
+            "Amount",
+            "Bedrag (EUR)",
+            "Bedrag",
+            "Transactiebedrag",
+            "Waarde",
+        ],
+    )
+
+    missing = []
+
+    if date_column is None:
+
+        missing.append(
+            "Date / Datum"
+        )
+
+    if description_column is None:
+
+        missing.append(
+            "Name / Description / Omschrijving"
+        )
+
+    if debit_credit_column is None:
+
+        missing.append(
+            "Debit/credit / Af-Bij"
+        )
+
+    if amount_column is None:
+
+        missing.append(
+            "Amount (EUR) / Bedrag"
+        )
+
+    if missing:
+
+        raise ValueError(
+            "Verplichte ING-kolommen ontbreken: "
+            + ", ".join(missing)
+        )
+
+    # --------------------------------------------------------
+    # INTERNAL FIELDS
+    # --------------------------------------------------------
+
+    df["date"] = df[
+        date_column
+    ].apply(
+        parse_ing_date
+    )
+
+    df["description"] = (
+        df[
+            description_column
+        ]
+        .astype(str)
+        .str.strip()
+    )
+
+    df["amount"] = df[
+        amount_column
+    ].apply(
+        parse_ing_amount
+    )
+
+    df["flow"] = df[
+        debit_credit_column
+    ].apply(
+        normalize_flow
+    )
+
+    df["transaction_type"] = (
+        df[
+            debit_credit_column
+        ]
+        .astype(str)
+        .str.strip()
+    )
+
+    # --------------------------------------------------------
+    # VALIDATE
+    # --------------------------------------------------------
+
+    df = df[
+        df["date"].notna()
+        & df["amount"].notna()
+        & df["description"].ne("")
+    ].copy()
+
+    if df.empty:
+
+        raise ValueError(
+            "Geen geldige transacties gevonden."
+        )
+
+    # --------------------------------------------------------
+    # MERCHANT
+    # --------------------------------------------------------
+
+    df["merchant"] = df[
+        "description"
+    ].apply(
+        lambda value:
+        normalize_merchant(
+            value,
+            merchant_rules,
+        )
+    )
+
+    # --------------------------------------------------------
+    # CATEGORY
+    # --------------------------------------------------------
+
+    df["category"] = df.apply(
+        lambda row:
+        categorize_import_transaction(
+            row["description"],
+            row["merchant"],
+            merchant_rules,
+        ),
+        axis=1,
+    )
+
+    # --------------------------------------------------------
+    # HASH
+    # --------------------------------------------------------
+
+    df["transaction_hash"] = df.apply(
+        lambda row:
+        create_import_transaction_hash(
+            row["date"],
+            row["description"],
+            row["amount"],
+            row["transaction_type"],
+        ),
+        axis=1,
+    )
+
+    # --------------------------------------------------------
+    # DUPLICATES INSIDE CSV
+    # --------------------------------------------------------
+
+    before = len(df)
+
+    df = df.drop_duplicates(
+        subset=[
+            "transaction_hash"
+        ],
+        keep="first",
+    )
+
+    duplicates_removed = (
+        before - len(df)
+    )
+
+    # --------------------------------------------------------
+    # SORT
+    # --------------------------------------------------------
+
+    df = df.sort_values(
+        "date",
+        ascending=False,
+    ).reset_index(
+        drop=True
+    )
+
+    return (
+        df,
+        {
+            "date": date_column,
+            "description": description_column,
+            "debit_credit": debit_credit_column,
+            "amount": amount_column,
+            "separator": separator,
+            "duplicates_removed": duplicates_removed,
+        },
     )
 
 
@@ -580,9 +1629,11 @@ if st.sidebar.button(
     st.session_state.clear()
 
     try:
+
         supabase.auth.sign_out()
 
     except Exception:
+
         pass
 
     st.rerun()
@@ -676,6 +1727,7 @@ def page_overview():
     )
 
     if selected_period is None:
+
         return
 
     # ========================================================
@@ -926,9 +1978,7 @@ def page_overview():
     detail_cols[2].metric(
         "Actieve recurring items",
         str(
-            len(
-                active_recurring
-            )
+            len(active_recurring)
         ),
     )
 
@@ -948,7 +1998,7 @@ def page_overview():
         "Overboekingen",
         str(
             transfer_count
-        )
+        ),
     )
 
     # ========================================================
@@ -1022,70 +2072,139 @@ def page_transactions():
             "📥 CSV importeren"
         ):
 
+            st.caption(
+                "Ondersteunt ING CSV's in Nederlands en Engels."
+            )
+
             uploaded_file = st.file_uploader(
                 "Kies een CSV-bestand",
                 type=["csv"],
+                key="transaction_csv",
             )
 
             if uploaded_file is not None:
 
                 try:
 
-                    raw_df = pd.read_csv(
-                        uploaded_file,
-                        sep=None,
-                        engine="python",
-                    )
-
                     prepared_df, mapping = (
-                        prepare_import_dataframe(
-                            raw_df,
+                        prepare_ing_csv(
+                            uploaded_file,
                             merchant_rules,
                         )
                     )
 
-                    st.caption(
-                        "Herkende kolommen: "
-                        f"datum={mapping['date']}, "
-                        f"omschrijving={mapping['description']}, "
-                        f"bedrag={mapping['amount']}, "
-                        f"debit/credit={mapping['debit_credit']}"
+                    # ------------------------------------------------
+                    # IMPORT INFO
+                    # ------------------------------------------------
+
+                    st.success(
+                        f"✅ {len(prepared_df):,} geldige transacties gevonden."
                     )
 
+                    st.caption(
+                        "Herkende kolommen: "
+                        f"datum={mapping['date']} · "
+                        f"omschrijving={mapping['description']} · "
+                        f"debit/credit={mapping['debit_credit']} · "
+                        f"bedrag={mapping['amount']}"
+                    )
+
+                    if mapping[
+                        "duplicates_removed"
+                    ]:
+
+                        st.info(
+                            f"{mapping['duplicates_removed']} dubbele "
+                            "transacties binnen het CSV-bestand verwijderd."
+                        )
+
+                    # ------------------------------------------------
+                    # PREVIEW
+                    # ------------------------------------------------
+
                     preview_columns = [
-                        column
-                        for column in [
-                            "date",
-                            "description",
-                            "merchant",
-                            "amount",
-                            "flow",
-                            "category",
-                        ]
-                        if column
-                        in prepared_df.columns
+                        "date",
+                        "description",
+                        "merchant",
+                        "amount",
+                        "flow",
+                        "category",
                     ]
 
+                    preview = prepared_df[
+                        preview_columns
+                    ].copy()
+
+                    preview["date"] = (
+                        pd.to_datetime(
+                            preview["date"]
+                        ).dt.strftime(
+                            "%d-%m-%Y"
+                        )
+                    )
+
+                    preview["amount"] = (
+                        preview["amount"]
+                        .apply(
+                            euro
+                        )
+                    )
+
                     st.dataframe(
-                        prepared_df[
-                            preview_columns
-                        ],
+                        preview,
                         use_container_width=True,
                         hide_index=True,
                     )
 
+                    # ------------------------------------------------
+                    # SAVE
+                    # ------------------------------------------------
+
                     if st.button(
-                        f"💾 {len(prepared_df)} transacties opslaan",
+                        f"💾 {len(prepared_df):,} transacties opslaan",
                         type="primary",
+                        use_container_width=True,
+                        key="save_csv_transactions",
                     ):
 
-                        records = (
-                            dataframe_to_transaction_records(
-                                prepared_df,
-                                user_id,
-                                selected_account_id,
+                        records = []
+
+                        for _, row in (
+                            prepared_df.iterrows()
+                        ):
+
+                            records.append(
+                                {
+                                    "user_id": user_id,
+                                    "account_id": selected_account_id,
+                                    "date": pd.Timestamp(
+                                        row["date"]
+                                    ).strftime(
+                                        "%Y-%m-%d"
+                                    ),
+                                    "description": str(
+                                        row["description"]
+                                    ),
+                                    "merchant": str(
+                                        row["merchant"]
+                                    ),
+                                    "amount": float(
+                                        row["amount"]
+                                    ),
+                                    "flow": str(
+                                        row["flow"]
+                                    ),
+                                    "category": str(
+                                        row["category"]
+                                    ),
+                                    "transaction_type": str(
+                                        row["transaction_type"]
+                                    ),
+                                    "transaction_hash": str(
+                                        row["transaction_hash"]
+                                    ),
+                                }
                             )
-                        )
 
                         saved = db_call(
                             "Transacties konden niet worden opgeslagen",
@@ -1096,7 +2215,7 @@ def page_transactions():
                         if saved is not None:
 
                             st.success(
-                                f"{len(records)} transacties verwerkt."
+                                f"✅ {len(records):,} transacties verwerkt."
                             )
 
                             st.rerun()
@@ -1104,7 +2223,13 @@ def page_transactions():
                 except Exception as exc:
 
                     st.error(
-                        f"Fout bij verwerken van CSV-bestand: {exc}"
+                        f"❌ Fout bij verwerken van CSV-bestand: {exc}"
+                    )
+
+                    st.caption(
+                        "Verwachte ING-kolommen zijn onder andere: "
+                        "Date / Datum, Name / Description / Omschrijving, "
+                        "Debit/credit / Af-Bij en Amount (EUR) / Bedrag."
                     )
 
     # ========================================================
@@ -1500,30 +2625,60 @@ def page_recurring():
         "Terugkerend"
     )
 
+    st.caption(
+        "Automatisch herkende terugkerende inkomsten en uitgaven."
+    )
+
     # ========================================================
     # DETECT
     # ========================================================
 
     if st.button(
-        "🔎 Terugkerende transacties opnieuw detecteren"
+        "🔎 Terugkerende transacties opnieuw detecteren",
+        type="primary",
     ):
 
-        # ----------------------------------------------------
-        # SINGLE ACCOUNT
-        # ----------------------------------------------------
+        total = 0
 
         if selected_account_id:
 
-            source = load_transactions(
-                user_id,
-                selected_account_id,
-            )
-
-            if not source.empty:
-
-                source = prepare_transactions(
-                    source
+            account_sources = [
+                (
+                    selected_account_id,
+                    load_transactions(
+                        user_id,
+                        selected_account_id,
+                    ),
                 )
+            ]
+
+        else:
+
+            account_sources = []
+
+            for account in accounts:
+
+                account_sources.append(
+                    (
+                        account["id"],
+                        load_transactions(
+                            user_id,
+                            account["id"],
+                        ),
+                    )
+                )
+
+        for account_id, source in (
+            account_sources
+        ):
+
+            if source.empty:
+
+                continue
+
+            source = prepare_transactions(
+                source
+            )
 
             detected = (
                 detect_recurring_transactions(
@@ -1535,102 +2690,46 @@ def page_recurring():
 
             for item in detected:
 
+                record = {
+                    "user_id": user_id,
+                    "account_id": account_id,
+                    **item,
+                    "active": True,
+                }
+
                 records.append(
-                    {
-                        "user_id": user_id,
-                        "account_id": selected_account_id,
-                        **item,
-                        "active": True,
-                    }
+                    record
                 )
 
-            if records:
+            if not records:
 
-                result = db_call(
-                    "Terugkerende transacties konden niet worden opgeslagen",
-                    db.save_recurring_transactions,
-                    records,
+                continue
+
+            result = db_call(
+                "Terugkerende transacties konden niet worden opgeslagen",
+                db.save_recurring_transactions,
+                records,
+            )
+
+            if result is not None:
+
+                total += len(
+                    records
                 )
 
-                if result is not None:
+        if total:
 
-                    st.success(
-                        f"{len(records)} terugkerende items gevonden."
-                    )
+            st.success(
+                f"✅ {total} terugkerende items gevonden."
+            )
 
-                    st.rerun()
-
-            else:
-
-                st.info(
-                    "Geen terugkerende transacties gevonden."
-                )
-
-        # ----------------------------------------------------
-        # ALL ACCOUNTS
-        # ----------------------------------------------------
+            st.rerun()
 
         else:
 
-            total = 0
-
-            for account in accounts:
-
-                source = load_transactions(
-                    user_id,
-                    account["id"],
-                )
-
-                if source.empty:
-                    continue
-
-                source = prepare_transactions(
-                    source
-                )
-
-                detected = (
-                    detect_recurring_transactions(
-                        source
-                    )
-                )
-
-                records = [
-                    {
-                        "user_id": user_id,
-                        "account_id": account["id"],
-                        **item,
-                        "active": True,
-                    }
-                    for item in detected
-                ]
-
-                if records:
-
-                    result = db_call(
-                        "Terugkerende transacties konden niet worden opgeslagen",
-                        db.save_recurring_transactions,
-                        records,
-                    )
-
-                    if result is not None:
-
-                        total += len(
-                            records
-                        )
-
-            if total:
-
-                st.success(
-                    f"{total} terugkerende items gevonden."
-                )
-
-                st.rerun()
-
-            else:
-
-                st.info(
-                    "Geen terugkerende transacties gevonden."
-                )
+            st.info(
+                "Geen nieuwe terugkerende transacties gevonden."
+            )
 
     # ========================================================
     # SPLIT ACTIVE / INACTIVE
@@ -1780,7 +2879,7 @@ def page_recurring():
                 if reliability == "Laag":
 
                     cols[2].caption(
-                        "Niet meegenomen in maandelijkse kosten"
+                        "Niet meegenomen in berekeningen"
                     )
 
                 if cols[3].button(
@@ -1949,6 +3048,7 @@ def page_budgets():
     )
 
     if selected_period is None:
+
         return
 
     # ========================================================
@@ -2126,3 +3226,4 @@ PAGES = {
 
 
 PAGES[page]()
+```
