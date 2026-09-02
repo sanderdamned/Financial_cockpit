@@ -1,3 +1,4 @@
+```python
 import pandas as pd
 import streamlit as st
 from supabase import create_client
@@ -948,7 +949,7 @@ def page_overview():
         "Overboekingen",
         str(
             transfer_count
-        ),
+        )
     )
 
     # ========================================================
@@ -1494,38 +1495,11 @@ def page_categories():
 # PAGE: RECURRING
 # ============================================================
 
-metric_columns(
-    [
-        (
-            "Maandelijkse kosten",
-            euro(
-                calculate_monthly_recurring_cost(
-                    active
-                )
-            ),
-        ),
-        (
-            "Jaarlijkse kosten",
-            euro(
-                calculate_yearly_recurring_cost(
-                    active
-                )
-            ),
-        ),
-        (
-            "Actieve items",
-            str(
-                len(active)
-            ),
-        ),
-        (
-            "Inactieve items",
-            str(
-                len(inactive)
-            ),
-        ),
-    ]
-)
+def page_recurring():
+
+    st.title(
+        "Terugkerend"
+    )
 
     # ========================================================
     # DETECT
@@ -1681,6 +1655,10 @@ metric_columns(
         )
     ]
 
+    # ========================================================
+    # SUMMARY METRICS
+    # ========================================================
+
     metric_columns(
         [
             (
@@ -1692,21 +1670,21 @@ metric_columns(
                 ),
             ),
             (
-                "Maandelijkse inkomsten",
+                "Jaarlijkse kosten",
                 euro(
-                    calculate_monthly_recurring_income(
+                    calculate_yearly_recurring_cost(
                         active
                     )
                 ),
             ),
             (
-                "Actief",
+                "Actieve items",
                 str(
                     len(active)
                 ),
             ),
             (
-                "Inactief",
+                "Inactieve items",
                 str(
                     len(inactive)
                 ),
@@ -1740,13 +1718,41 @@ metric_columns(
                     ]
                 )
 
+                merchant = item.get(
+                    "merchant",
+                    "Onbekend",
+                )
+
+                category = item.get(
+                    "category",
+                    "Overig",
+                )
+
+                frequency = item.get(
+                    "frequency",
+                    "Maandelijks",
+                )
+
+                if item.get(
+                    "is_one_time_large",
+                    False,
+                ):
+
+                    frequency_label = (
+                        "Jaarlijks · grote eenmalige uitgave"
+                    )
+
+                else:
+
+                    frequency_label = frequency
+
                 cols[0].write(
-                    f"**{item.get('merchant', 'Onbekend')}**"
+                    f"**{merchant}**"
                 )
 
                 cols[0].caption(
-                    f"{item.get('category', 'Overig')} · "
-                    f"{item.get('frequency', 'Maandelijks')}"
+                    f"{category} · "
+                    f"{frequency_label}"
                 )
 
                 cols[1].write(
@@ -1763,12 +1769,20 @@ metric_columns(
                     f"{item.get('next_occurrence', '-')}"
                 )
 
-                cols[2].write(
-                    item.get(
-                        "reliability",
-                        "-",
-                    )
+                reliability = item.get(
+                    "reliability",
+                    "-",
                 )
+
+                cols[2].write(
+                    reliability
+                )
+
+                if reliability == "Laag":
+
+                    cols[2].caption(
+                        "Niet meegenomen in maandelijkse kosten"
+                    )
 
                 if cols[3].button(
                     "Pauzeer",
@@ -1796,6 +1810,12 @@ metric_columns(
                     )
 
                     st.rerun()
+
+    else:
+
+        st.info(
+            "Geen actieve terugkerende uitgaven gevonden."
+        )
 
     # ========================================================
     # INACTIVE
@@ -2107,3 +2127,4 @@ PAGES = {
 
 
 PAGES[page]()
+```
