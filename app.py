@@ -3649,10 +3649,16 @@ elif chapter == "🔄 Terugkerend":
         use_container_width=True,
     ):
 
-        detected = (
-            detect_recurring_transactions(
-                transactions
-            )
+        if isinstance(transactions, pd.DataFrame):
+    recurring_input = transactions
+elif transactions:
+    recurring_input = pd.DataFrame(transactions)
+else:
+    recurring_input = pd.DataFrame()
+
+recurring_detected = detect_recurring_transactions(
+    recurring_input
+)
         )
 
         if detected:
