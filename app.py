@@ -3643,22 +3643,58 @@ elif chapter == "🔄 Terugkerend":
         "die regelmatig terugkomen."
     )
 
+    # --------------------------------------------------------
+    # DETECT RECURRING TRANSACTIONS
+    # --------------------------------------------------------
+
     if st.button(
         "🔍 Terugkerende betalingen detecteren",
         type="primary",
         use_container_width=True,
     ):
 
-        if isinstance(transactions, pd.DataFrame):
-    recurring_input = transactions
-elif transactions:
-    recurring_input = pd.DataFrame(transactions)
-else:
-    recurring_input = pd.DataFrame()
+        # transaction_df is already normalized by
+        # prepare_transactions() above.
+        #
+        # detect_recurring_transactions() expects
+        # a pandas DataFrame.
 
-recurring_detected = detect_recurring_transactions(
-    recurring_input
-)
+        if transaction_df is None:
+
+            recurring_input = pd.DataFrame()
+
+        elif isinstance(
+            transaction_df,
+            pd.DataFrame,
+        ):
+
+            recurring_input = (
+                transaction_df.copy()
+            )
+
+        else:
+
+            recurring_input = pd.DataFrame(
+                transaction_df
+            )
+
+        # ----------------------------------------------------
+        # DETECT
+        # ----------------------------------------------------
+
+        detected = (
+            detect_recurring_transactions(
+                recurring_input
+            )
+        )
+
+        # Safely handle None
+        if detected is None:
+            detected = []
+
+        # ----------------------------------------------------
+        # SAVE
+        # ----------------------------------------------------
 
         if detected:
 
@@ -3679,6 +3715,14 @@ recurring_detected = detect_recurring_transactions(
 
                 st.rerun()
 
+            else:
+
+                st.warning(
+                    "⚠️ Er zijn terugkerende "
+                    "betalingen gevonden, maar ze "
+                    "konden niet worden opgeslagen."
+                )
+
         else:
 
             st.info(
@@ -3686,12 +3730,15 @@ recurring_detected = detect_recurring_transactions(
                 "betalingen gevonden."
             )
 
+    # --------------------------------------------------------
+    # LOAD / DISPLAY SAVED RECURRING
+    # --------------------------------------------------------
+
     if saved_recurring:
 
         active = [
             item
-            for item
-            in saved_recurring
+            for item in saved_recurring
             if item.get(
                 "active",
                 True,
@@ -3700,13 +3747,16 @@ recurring_detected = detect_recurring_transactions(
 
         inactive = [
             item
-            for item
-            in saved_recurring
+            for item in saved_recurring
             if not item.get(
                 "active",
                 True,
             )
         ]
+
+        # ----------------------------------------------------
+        # COST CALCULATIONS
+        # ----------------------------------------------------
 
         monthly_cost = (
             calculate_monthly_recurring_cost(
@@ -3719,6 +3769,10 @@ recurring_detected = detect_recurring_transactions(
                 saved_recurring
             )
         )
+
+        # ----------------------------------------------------
+        # SUMMARY
+        # ----------------------------------------------------
 
         col1, col2, col3, col4 = (
             st.columns(4)
@@ -3754,159 +3808,206 @@ recurring_detected = detect_recurring_transactions(
 
         st.divider()
 
-        for recurring in active:
+        # ----------------------------------------------------
+        # ACTIVE RECURRING
+        # ----------------------------------------------------
 
-            recurring_id = (
-                recurring.get("id")
+        if active:
+
+            st.subheader(
+                "🔄 Actieve terugkerende betalingen"
             )
 
-            merchant = (
-                recurring.get(
+            for recurring in active:
+
+                recurring_id = recurring.get(
+                    "id"
+                )
+
+                merchant = recurring.get(
                     "merchant",
                     "Onbekend",
                 )
-            )
 
-            category = (
-                recurring.get(
+                category = recurring.get(
                     "category",
                     "Overig",
                 )
-            )
 
-            frequency = (
-                recurring.get(
+                frequency = recurring.get(
                     "frequency",
                     "Onbekend",
                 )
-            )
 
-            amount = float(
-                recurring.get(
-                    "expected_amount",
-                    0,
+                amount = float(
+                    recurring.get(
+                        "expected_amount",
+                        0,
+                    )
+                    or 0
                 )
-                or 0
-            )
 
-            next_occurrence = (
-                recurring.get(
+                next_occurrence = recurring.get(
                     "next_occurrence",
                     "-",
                 )
-            )
 
-            reliability = (
-                recurring.get(
+                reliability = recurring.get(
                     "reliability",
                     "-",
                 )
-            )
 
-            is_one_time_large = (
-                bool(
+                is_one_time_large = bool(
                     recurring.get(
                         "is_one_time_large",
                         False,
                     )
                 )
+
+                with st.container(
+                    border=True
+                ):
+
+                    col1, col2, col3, col4 = (
+                        st.columns(
+                            [
+                                3,
+                                1.5,
+                                1.5,
+                                1.5,
+                            ]
+                        )
+                    )
+
+                    # ----------------------------------------
+                    # MERCHANT
+                    # ----------------------------------------
+
+                    with col1:
+
+                        st.markdown(
+                            f"**{str(merchant).title()}**"
+                        )
+
+                        labels = (
+                            f"{category} · "
+                            f"{frequency}"
+                        )
+
+                        if is_one_time_large:
+
+                            labels += (
+                                " · grote eenmalige uitgave"
+                            )
+
+                        st.caption(
+                            labels
+                        )
+
+                    # ----------------------------------------
+                    # AMOUNT
+                    # ----------------------------------------
+
+                    with col2:
+
+                        st.metric(
+                            "Bedrag",
+                            euro(amount),
+                        )
+
+                    # ----------------------------------------
+                    # NEXT OCCURRENCE
+                    # ----------------------------------------
+
+                    with col3:
+
+                        st.metric(
+                            "Volgende",
+                            next_occurrence,
+                        )
+
+                    # ----------------------------------------
+                    # RELIABILITY
+                    # ----------------------------------------
+
+                    with col4:
+
+                        st.metric(
+                            "Betrouwbaarheid",
+                            reliability,
+                        )
+
+                    # ----------------------------------------
+                    # ACTIONS
+                    # ----------------------------------------
+
+                    c1, c2 = st.columns(2)
+
+                    with c1:
+
+                        if st.button(
+                            "⏸️ Deactiveren",
+                            key=(
+                                f"deactivate_"
+                                f"{recurring_id}"
+                            ),
+                            use_container_width=True,
+                        ):
+
+                            result = (
+                                update_recurring_active(
+                                    recurring_id,
+                                    False,
+                                )
+                            )
+
+                            if result is not None:
+
+                                st.success(
+                                    "Betaling gedeactiveerd."
+                                )
+
+                                st.rerun()
+
+                    with c2:
+
+                        if st.button(
+                            "🗑️ Verwijderen",
+                            key=(
+                                f"delete_"
+                                f"{recurring_id}"
+                            ),
+                            use_container_width=True,
+                        ):
+
+                            result = (
+                                delete_recurring_transaction(
+                                    recurring_id
+                                )
+                            )
+
+                            if result is not None:
+
+                                st.success(
+                                    "Terugkerende betaling verwijderd."
+                                )
+
+                                st.rerun()
+
+        else:
+
+            st.info(
+                "Er zijn momenteel geen actieve "
+                "terugkerende betalingen."
             )
 
-            with st.container(
-                border=True
-            ):
-
-                col1, col2, col3, col4 = (
-                    st.columns(
-                        [
-                            3,
-                            1.5,
-                            1.5,
-                            1.5,
-                        ]
-                    )
-                )
-
-                with col1:
-
-                    st.markdown(
-                        f"**{merchant.title()}**"
-                    )
-
-                    labels = (
-                        f"{category} · "
-                        f"{frequency}"
-                    )
-
-                    if is_one_time_large:
-
-                        labels += (
-                            " · grote eenmalige uitgave"
-                        )
-
-                    st.caption(
-                        labels
-                    )
-
-                with col2:
-
-                    st.metric(
-                        "Bedrag",
-                        euro(amount),
-                    )
-
-                with col3:
-
-                    st.metric(
-                        "Volgende",
-                        next_occurrence,
-                    )
-
-                with col4:
-
-                    st.metric(
-                        "Betrouwbaarheid",
-                        reliability,
-                    )
-
-                c1, c2 = st.columns(2)
-
-                with c1:
-
-                    if st.button(
-                        "⏸️ Deactiveren",
-                        key=(
-                            f"deactivate_"
-                            f"{recurring_id}"
-                        ),
-                        use_container_width=True,
-                    ):
-
-                        update_recurring_active(
-                            recurring_id,
-                            False,
-                        )
-
-                        st.rerun()
-
-                with c2:
-
-                    if st.button(
-                        "🗑️ Verwijderen",
-                        key=(
-                            f"delete_"
-                            f"{recurring_id}"
-                        ),
-                        use_container_width=True,
-                    ):
-
-                        delete_recurring_transaction(
-                            recurring_id
-                        )
-
-                        st.rerun()
+        # ----------------------------------------------------
+        # INACTIVE RECURRING
+        # ----------------------------------------------------
 
         if inactive:
+
+            st.divider()
 
             with st.expander(
                 "⏸️ Inactieve betalingen"
@@ -3914,33 +4015,90 @@ recurring_detected = detect_recurring_transactions(
 
                 for recurring in inactive:
 
-                    recurring_id = (
-                        recurring.get("id")
+                    recurring_id = recurring.get(
+                        "id"
                     )
 
-                    merchant = (
+                    merchant = recurring.get(
+                        "merchant",
+                        "Onbekend",
+                    )
+
+                    category = recurring.get(
+                        "category",
+                        "Overig",
+                    )
+
+                    frequency = recurring.get(
+                        "frequency",
+                        "Onbekend",
+                    )
+
+                    amount = float(
                         recurring.get(
-                            "merchant",
-                            "Onbekend",
+                            "expected_amount",
+                            0,
                         )
+                        or 0
                     )
 
-                    if st.button(
-                        f"▶️ "
-                        f"{merchant.title()} "
-                        "activeren",
-                        key=(
-                            f"activate_"
-                            f"{recurring_id}"
-                        ),
+                    with st.container(
+                        border=True
                     ):
 
-                        update_recurring_active(
-                            recurring_id,
-                            True,
+                        col1, col2, col3 = (
+                            st.columns(
+                                [
+                                    3,
+                                    2,
+                                    2,
+                                ]
+                            )
                         )
 
-                        st.rerun()
+                        with col1:
+
+                            st.markdown(
+                                f"**{str(merchant).title()}**"
+                            )
+
+                            st.caption(
+                                f"{category} · "
+                                f"{frequency}"
+                            )
+
+                        with col2:
+
+                            st.metric(
+                                "Bedrag",
+                                euro(amount),
+                            )
+
+                        with col3:
+
+                            if st.button(
+                                "▶️ Activeren",
+                                key=(
+                                    f"activate_"
+                                    f"{recurring_id}"
+                                ),
+                                use_container_width=True,
+                            ):
+
+                                result = (
+                                    update_recurring_active(
+                                        recurring_id,
+                                        True,
+                                    )
+                                )
+
+                                if result is not None:
+
+                                    st.success(
+                                        "Betaling geactiveerd."
+                                    )
+
+                                    st.rerun()
 
     else:
 
