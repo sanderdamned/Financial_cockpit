@@ -3935,7 +3935,7 @@ elif chapter == "💼 Vermogen & doelen":
     st.title("💼 Vermogen & spaardoelen")
     st.caption("Beheer actuele saldi, reserveer geld voor specifieke doelen en plan toekomstige grote uitgaven.")
 
-    total_liquid = sum(float(a.get("current_balance") or 0) for a in accounts if a.get("is_liquid", True))
+    total_liquid = sum(float(a.get("current_balance") or 0) for a in accounts if a.get("is_liquid", True) and "beleg" not in str(a.get("account_type", "")).lower())
     total_investments = sum(float(a.get("current_balance") or 0) for a in accounts if "beleg" in str(a.get("account_type", "")).lower())
     col1, col2, col3 = st.columns(3)
     col1.metric("Totaal ingevoerde liquide middelen", euro(total_liquid))
