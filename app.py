@@ -9,6 +9,7 @@ from supabase import create_client
 
 from categorization import (
     CATEGORIES,
+    INCOME_CATEGORIES,
     EXPENSE_CATEGORIES,
 )
 
@@ -2260,6 +2261,28 @@ budgets = load_budgets(
 )
 
 
+def income_source_summary(df):
+    """Return incoming amounts grouped by source, keeping internal transfers visible separately."""
+    if df is None or df.empty or "flow" not in df.columns:
+        return pd.Series(dtype=float)
+    incoming = df[df["flow"] == "Inkomst"].copy()
+    if incoming.empty:
+        return pd.Series(dtype=float)
+    incoming["amount"] = pd.to_numeric(incoming["amount"], errors="coerce").fillna(0).abs()
+    if "category" not in incoming.columns:
+        incoming["category"] = "Overige inkomsten"
+    incoming["category"] = incoming["category"].fillna("Overige inkomsten").astype(str)
+    # Older imported transactions may have a generic category despite transfer-like descriptions.
+    description = incoming.get("description", pd.Series("", index=incoming.index)).fillna("").astype(str)
+    merchant = incoming.get("merchant", pd.Series("", index=incoming.index)).fillna("").astype(str)
+    transfer_pattern = r"overboeking|eigen rekening|spaarrekening|spaargeld|transfer|overgemaakt van|interne overboeking"
+    looks_like_transfer = (description + " " + merchant).str.contains(transfer_pattern, case=False, regex=True, na=False)
+    incoming.loc[looks_like_transfer, "category"] = "Overboeking spaargeld"
+    if "is_transfer" in incoming.columns:
+        incoming.loc[incoming["is_transfer"].fillna(False), "category"] = "Overboeking spaargeld"
+    return incoming.groupby("category")["amount"].sum().sort_values(ascending=False)
+
+
 # ============================================================
 # CHAPTER 1 — OVERVIEW
 # ============================================================
@@ -2565,6 +2588,35 @@ if chapter == "📊 Overzicht":
                 st.info(
                     "Geen uitgaven in deze maand."
                 )
+
+    # --------------------------------------------------------
+    # INCOME SOURCE BREAKDOWN
+    # --------------------------------------------------------
+    if not is_future:
+        st.divider()
+        st.subheader("💶 Waar komen je inkomsten vandaan?")
+        income_sources = income_source_summary(month_df)
+        if not income_sources.empty:
+            income_total = float(income_sources.sum())
+            transfer_income = float(income_sources.get("Overboeking spaargeld", 0.0))
+            real_income = income_total - transfer_income
+            income_col1, income_col2, income_col3 = st.columns(3)
+            income_col1.metric("Totaal bijgeschreven", euro(income_total))
+            income_col2.metric("Inkomsten excl. overboekingen", euro(real_income))
+            income_col3.metric("Interne/waarschijnlijke overboekingen", euro(transfer_income))
+            source_display = income_sources.rename_axis("Bron").rename("Bedrag")
+            st.bar_chart(source_display)
+            st.dataframe(
+                source_display.reset_index().rename(columns={"Bedrag": "Bedrag"}),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.caption(
+                "Overboekingen worden apart getoond omdat geld verplaatsen tussen eigen rekeningen "
+                "geen nieuw inkomen is. Controleer de categorie als een overboeking niet juist is herkend."
+            )
+        else:
+            st.info("Geen inkomsten in deze maand.")
 
     else:
 
@@ -3107,6 +3159,15 @@ elif chapter == "💳 Transacties":
                 euro(income),
             )
 
+        st.subheader("💶 Inkomsten per bron")
+        source_summary = income_source_summary(transaction_display)
+        if not source_summary.empty:
+            st.bar_chart(source_summary)
+            source_table = source_summary.rename_axis("Bron").rename("Bedrag").reset_index()
+            source_table["Bedrag"] = source_table["Bedrag"].apply(euro)
+            st.dataframe(source_table, use_container_width=True, hide_index=True)
+            st.caption("Controleer in Categorieën of salaris, belasting/toeslagen en overboekingen juist zijn ingedeeld.")
+
         st.subheader(
             "Alle transacties"
         )
@@ -3153,8 +3214,8 @@ elif chapter == "🏷️ Categorieën":
     )
 
     st.caption(
-        "Categoriseer je uitgaven eenvoudig "
-        "per winkel of organisatie."
+        "Categoriseer inkomsten én uitgaven per winkel, organisatie of tegenrekening. "
+        "Zo zie je apart wat salaris, belasting/toeslagen en overboekingen opleveren."
     )
 
     all_transactions = (
@@ -3487,6 +3548,59 @@ elif chapter == "🏷️ Categorieën":
                             )
 
                             st.rerun()
+
+    # --------------------------------------------------------
+    # INCOME CATEGORIZATION
+    # --------------------------------------------------------
+    st.divider()
+    st.subheader("💶 Inkomsten categoriseren")
+    st.caption(
+        "Gebruik deze regels om bijschrijvingen te onderscheiden in salaris, belasting/toeslagen, "
+        "rente, overboekingen, Tikkies en overige inkomsten."
+    )
+    income_df = df[df["flow"] == "Inkomst"].copy()
+    if income_df.empty:
+        st.info("Geen inkomsten gevonden.")
+    else:
+        income_df["amount"] = pd.to_numeric(income_df["amount"], errors="coerce").fillna(0)
+        income_df["merchant"] = income_df.get("merchant", "").fillna("Onbekend").astype(str)
+        income_summary = (
+            income_df.groupby("merchant", dropna=False)
+            .agg(transactions=("amount", "count"), total=("amount", lambda values: values.abs().sum()))
+            .reset_index()
+            .sort_values("total", ascending=False)
+        )
+        for income_index, income_row in income_summary.reset_index(drop=True).iterrows():
+            merchant_name = str(income_row["merchant"]).strip()
+            merchant_key = merchant_name.lower()
+            current_series = income_df.loc[
+                income_df["merchant"].astype(str).str.lower().str.strip() == merchant_key,
+                "category",
+            ].dropna().astype(str)
+            current_income_category = current_series.mode().iloc[0] if not current_series.empty else "Overige inkomsten"
+            if current_income_category not in INCOME_CATEGORIES:
+                current_income_category = "Overige inkomsten"
+            with st.container(border=True):
+                income_left, income_mid, income_right = st.columns([3, 2, 1.6])
+                with income_left:
+                    st.markdown(f"**{merchant_name.title()}**")
+                    st.caption(f"{int(income_row['transactions'])} bijschrijvingen · {euro(float(income_row['total']))}")
+                with income_mid:
+                    new_income_category = st.selectbox(
+                        "Inkomstencategorie",
+                        INCOME_CATEGORIES,
+                        index=INCOME_CATEGORIES.index(current_income_category),
+                        key=f"income_category_{income_index}_{merchant_key}",
+                        label_visibility="collapsed",
+                    )
+                with income_right:
+                    if st.button("Categorie opslaan", key=f"save_income_category_{income_index}_{merchant_key}", use_container_width=True):
+                        saved_income_rule = save_merchant_category_rule(user_id, merchant_key, new_income_category)
+                        if saved_income_rule is not None:
+                            updated_income = update_transactions_for_merchant(user_id, merchant_key, new_income_category)
+                            if updated_income is not None:
+                                st.success(f"{merchant_name.title()} → {new_income_category}")
+                                st.rerun()
 
     # --------------------------------------------------------
     # CUSTOM RULE
@@ -4491,6 +4605,21 @@ elif chapter == "📆 Jaaranalyse":
             use_container_width=True,
             hide_index=True,
         )
+
+        st.subheader("💶 Jaarlijkse inkomsten per bron")
+        income_df = annual_df[annual_df["flow"] == "Inkomst"].copy()
+        if not income_df.empty:
+            income_df["Bedrag"] = pd.to_numeric(income_df["amount"], errors="coerce").abs()
+            income_df["Bron"] = income_df.get("category", pd.Series("Overige inkomsten", index=income_df.index)).fillna("Overige inkomsten")
+            income_df = income_df[income_df["date"].dt.year.isin(all_years)]
+            income_by_year = income_df.pivot_table(
+                index="Bron", columns=income_df["date"].dt.year, values="Bedrag", aggfunc="sum", fill_value=0
+            )
+            income_by_year.columns = [str(year) for year in income_by_year.columns]
+            st.dataframe(income_by_year.style.format("€ {:,.2f}"), use_container_width=True)
+            st.caption("Overboekingen staan apart van salaris en andere inkomsten. Controleer de categorieën bij twijfel.")
+        else:
+            st.info("Geen inkomsten gevonden voor deze periode.")
 
         st.subheader("Uitgaven per categorie")
         expense_df = annual_df[annual_df["flow"] == "Uitgave"].copy()
