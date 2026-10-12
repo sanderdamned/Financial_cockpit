@@ -827,39 +827,37 @@ def load_budgets(user_id):
 def save_budget(
     user_id,
     category,
-    monthly_limit,
+    planned_amount,
+    budget_type="monthly",
+    period_months=1,
 ):
-
+    """Save an editable budget and its monthly-normalized equivalent."""
     try:
+        amount = max(0.0, float(planned_amount or 0))
+        budget_type = str(budget_type or "monthly")
+        if budget_type == "annual":
+            months = 12
+        elif budget_type == "periodic":
+            months = max(1, int(period_months or 1))
+        else:
+            months = 1
 
-        result = (
-            supabase
-            .table("budgets")
-            .upsert(
-                {
-                    "user_id": user_id,
-                    "category": category,
-                    "monthly_limit":
-                        float(
-                            monthly_limit
-                        ),
-                },
-                on_conflict=(
-                    "user_id,category"
-                ),
-            )
-            .execute()
+        monthly_limit = amount / months
+        payload = {
+            "user_id": user_id,
+            "category": category,
+            "monthly_limit": monthly_limit,
+            "planned_amount": amount,
+            "budget_type": budget_type,
+            "period_months": months,
+        }
+        return (
+            supabase.table("budgets")
+            .upsert(payload, on_conflict="user_id,category")
+            .execute().data
         )
-
-        return result.data
-
     except Exception as e:
-
-        st.error(
-            f"❌ Budget kon niet "
-            f"worden opgeslagen: {e}"
-        )
-
+        st.error(f"❌ Budget kon niet worden opgeslagen: {e}")
         return None
 
 
@@ -4146,195 +4144,267 @@ elif chapter == "🔄 Terugkerend":
 
 elif chapter == "🎯 Budgetten":
 
-    st.title(
-        "🎯 Budgetten"
-    )
-
+    st.title("🎯 Budgetten")
     st.caption(
-        "Stel per categorie een maximaal "
-        "bedrag per maand in."
+        "Voorstellen op basis van je eerdere uitgaven. Je kunt elk voorstel aanpassen "
+        "en uitgaven indelen als maandelijks, periodiek of jaarlijks."
     )
 
-    with st.expander(
-        "➕ Budget instellen"
-    ):
+    # Historical estimates use the 12 most recently completed months, so the
+    # current partial month does not artificially lower the suggested budget.
+    history = transaction_df.copy() if transaction_df is not None else pd.DataFrame()
+    suggestions = []
+    if not history.empty and "date" in history.columns:
+        history["date"] = pd.to_datetime(history["date"], errors="coerce")
+        history = history[history["date"].notna()].copy()
+        if "flow" in history.columns:
+            history = history[history["flow"] == "Uitgave"].copy()
+        if "is_transfer" in history.columns:
+            history = history[~history["is_transfer"].fillna(False)].copy()
+        history["expense_amount"] = pd.to_numeric(history["amount"], errors="coerce").abs()
+        history = history[history["expense_amount"].notna()]
+        this_month = pd.Timestamp(date.today().replace(day=1))
+        history_start = this_month - pd.DateOffset(months=12)
+        history = history[(history["date"] >= history_start) & (history["date"] < this_month)]
 
-        budget_category = (
-            st.selectbox(
-                "Categorie",
-                [
-                    category
-                    for category
-                    in CATEGORIES
-                    if category
-                    != "Inkomen"
-                ],
+        if "category" not in history.columns:
+            history["category"] = "Overig"
+
+        # Include zero-spend months in the monthly average.
+        if not history.empty:
+            monthly_totals = (
+                history.groupby(["category", history["date"].dt.to_period("M")])["expense_amount"]
+                .sum().reset_index()
             )
+            monthly_totals.columns = ["category", "month", "amount"]
+            for category in sorted(history["category"].fillna("Overig").unique()):
+                category_months = monthly_totals[monthly_totals["category"] == category]
+                monthly_average = float(category_months["amount"].sum()) / 12.0
+                category_total = float(category_months["amount"].sum())
+                if monthly_average <= 0:
+                    continue
+
+                budget_type = "monthly"
+                period_months = 1
+                planned_amount = monthly_average
+                type_reason = "Gemiddelde per maand over de laatste 12 volledige maanden"
+
+                # Where the user has already configured a recurring payment,
+                # retain its real frequency and amount for the suggestion.
+                matching = [
+                    item for item in (saved_recurring or [])
+                    if str(item.get("category", "")).strip() == str(category).strip()
+                    and item.get("active", True)
+                    and item.get("flow", "Uitgave") == "Uitgave"
+                ]
+                frequency_map = {
+                    "per kwartaal": ("periodic", 3),
+                    "quarterly": ("periodic", 3),
+                    "halfjaarlijks": ("periodic", 6),
+                    "semi-annually": ("periodic", 6),
+                    "jaarlijks": ("annual", 12),
+                    "yearly": ("annual", 12),
+                    "annually": ("annual", 12),
+                }
+                for item in matching:
+                    frequency = str(item.get("frequency", "")).lower()
+                    if frequency in frequency_map:
+                        budget_type, period_months = frequency_map[frequency]
+                        planned_amount = float(item.get("expected_amount", 0) or 0)
+                        type_reason = f"Gebaseerd op opgeslagen terugkerende betaling ({item.get('frequency')})"
+                        break
+
+                suggestions.append({
+                    "category": str(category),
+                    "planned_amount": max(0.0, float(planned_amount)),
+                    "budget_type": budget_type,
+                    "period_months": period_months,
+                    "historical_total": category_total,
+                    "monthly_average": monthly_average,
+                    "reason": type_reason,
+                })
+
+    budgets = load_budgets(user_id)
+    existing_by_category = {str(item.get("category")): item for item in budgets}
+    suggestions = [item for item in suggestions if item["category"] not in existing_by_category]
+
+    st.subheader("💡 Budgetvoorstellen op basis van je uitgaven")
+    st.caption(
+        "De voorstellen gebruiken de laatste 12 volledige maanden. Periodieke en jaarlijkse "
+        "frequenties worden overgenomen uit je opgeslagen terugkerende betalingen als die beschikbaar zijn. "
+        "Controleer de voorstellen voordat je ze opslaat."
+    )
+
+    if suggestions:
+        suggestion_tabs = st.tabs(["Maandelijks", "Periodiek", "Jaarlijks"])
+        type_details = [
+            ("monthly", "Maandelijks"),
+            ("periodic", "Periodiek"),
+            ("annual", "Jaarlijks"),
+        ]
+        for tab, (type_value, type_label) in zip(suggestion_tabs, type_details):
+            with tab:
+                typed = [item for item in suggestions if item["budget_type"] == type_value]
+                if not typed:
+                    st.info("Geen voorstellen van dit type gevonden. Je kunt ook hieronder handmatig een budget toevoegen.")
+                for item in typed:
+                    with st.container(border=True):
+                        left, middle, right = st.columns([2, 2, 1])
+                        with left:
+                            st.markdown(f"**{item['category']}**")
+                            st.caption(item["reason"])
+                            st.caption(f"Historisch uitgegeven in 12 maanden: {euro(item['historical_total'])}")
+                        with middle:
+                            unit = "per jaar" if type_value == "annual" else (
+                                f"per {item['period_months']} maanden" if type_value == "periodic" else "per maand"
+                            )
+                            suggested_amount = st.number_input(
+                                f"Voorstel ({unit})",
+                                min_value=0.0,
+                                value=round(float(item["planned_amount"]), 2),
+                                step=10.0,
+                                format="%.2f",
+                                key=f"budget_suggest_amount_{item['category']}",
+                            )
+                        with right:
+                            st.write("")
+                            st.write("")
+                            if st.button("Voorstel opslaan", key=f"budget_suggest_save_{item['category']}", use_container_width=True):
+                                saved = save_budget(
+                                    user_id, item["category"], suggested_amount,
+                                    item["budget_type"], item["period_months"]
+                                )
+                                if saved is not None:
+                                    st.success(f"Budget voor {item['category']} opgeslagen.")
+                                    st.rerun()
+    else:
+        st.info(
+            "Er zijn geen nieuwe voorstellen. Importeer meer transacties of pas bestaande budgetten hieronder aan."
         )
 
-        budget_amount = (
-            st.number_input(
-                "Maandelijks budget",
-                min_value=0.0,
-                step=25.0,
-                value=250.0,
-                format="%.2f",
-            )
+    with st.expander("➕ Zelf een budget toevoegen", expanded=not bool(budgets)):
+        add_category = st.selectbox(
+            "Categorie",
+            [c for c in CATEGORIES if c != "Inkomen" and c not in existing_by_category],
+            key="budget_add_category",
         )
-
-        if st.button(
-            "💾 Budget opslaan",
-            type="primary",
-            use_container_width=True,
-        ):
-
-            result = save_budget(
-                user_id,
-                budget_category,
-                budget_amount,
+        add_type_label = st.selectbox(
+            "Soort uitgave",
+            ["Maandelijks", "Periodiek", "Jaarlijks"],
+            key="budget_add_type",
+        )
+        add_type = {"Maandelijks": "monthly", "Periodiek": "periodic", "Jaarlijks": "annual"}[add_type_label]
+        add_period_months = 1
+        if add_type == "periodic":
+            add_period_months = st.selectbox(
+                "Herhaling elke",
+                [2, 3, 4, 6, 9, 12],
+                format_func=lambda x: f"{x} maanden",
+                key="budget_add_period",
             )
-
-            if result is not None:
-
-                st.success(
-                    f"✅ Budget voor "
-                    f"{budget_category} opgeslagen."
-                )
-
+        add_amount_label = "Bedrag per jaar" if add_type == "annual" else (
+            "Bedrag per periode" if add_type == "periodic" else "Bedrag per maand"
+        )
+        add_amount = st.number_input(
+            add_amount_label, min_value=0.0, step=10.0, value=100.0,
+            format="%.2f", key="budget_add_amount",
+        )
+        if st.button("Budget toevoegen", type="primary", use_container_width=True, key="budget_add_save"):
+            saved = save_budget(user_id, add_category, add_amount, add_type, add_period_months)
+            if saved is not None:
+                st.success(f"Budget voor {add_category} opgeslagen.")
                 st.rerun()
 
-    budgets = load_budgets(
-        user_id
-    )
-
+    budgets = load_budgets(user_id)
     if budgets:
+        st.subheader("✏️ Bestaande budgetten aanpassen")
+        edit_tabs = st.tabs(["Maandelijks", "Periodiek", "Jaarlijks"])
+        edit_types = [
+            ("monthly", "Maandelijks"),
+            ("periodic", "Periodiek"),
+            ("annual", "Jaarlijks"),
+        ]
+        for tab, (type_value, type_label) in zip(edit_tabs, edit_types):
+            with tab:
+                typed_budgets = [
+                    b for b in budgets
+                    if str(b.get("budget_type", "monthly")) == type_value
+                ]
+                if not typed_budgets:
+                    st.info("Nog geen budgetten in deze categorie.")
+                for budget in typed_budgets:
+                    category = str(budget.get("category", "Overig"))
+                    with st.expander(category, expanded=False):
+                        current_type = str(budget.get("budget_type", "monthly"))
+                        current_months = int(budget.get("period_months", 1) or 1)
+                        default_amount = float(
+                            budget.get("planned_amount")
+                            if budget.get("planned_amount") is not None
+                            else budget.get("monthly_limit", 0) * (12 if current_type == "annual" else current_months)
+                        )
+                        with st.form(f"edit_budget_form_{category}"):
+                            edited_type_label = st.selectbox(
+                                "Soort uitgave",
+                                ["Maandelijks", "Periodiek", "Jaarlijks"],
+                                index={"monthly": 0, "periodic": 1, "annual": 2}.get(current_type, 0),
+                                key=f"edit_budget_type_{category}",
+                            )
+                            edited_type = {"Maandelijks": "monthly", "Periodiek": "periodic", "Jaarlijks": "annual"}[edited_type_label]
+                            edited_months = 1
+                            if edited_type == "periodic":
+                                choices = [2, 3, 4, 6, 9, 12]
+                                selected_months = current_months if current_months in choices else 3
+                                edited_months = st.selectbox(
+                                    "Herhaling elke",
+                                    choices,
+                                    index=choices.index(selected_months),
+                                    format_func=lambda x: f"{x} maanden",
+                                    key=f"edit_budget_months_{category}",
+                                )
+                            label = "Bedrag per jaar" if edited_type == "annual" else (
+                                "Bedrag per periode" if edited_type == "periodic" else "Bedrag per maand"
+                            )
+                            edited_amount = st.number_input(
+                                label, min_value=0.0, value=round(default_amount, 2),
+                                step=10.0, format="%.2f", key=f"edit_budget_amount_{category}",
+                            )
+                            submitted = st.form_submit_button("Wijzigingen opslaan", use_container_width=True)
+                        if submitted:
+                            saved = save_budget(user_id, category, edited_amount, edited_type, edited_months)
+                            if saved is not None:
+                                st.success(f"Budget voor {category} bijgewerkt.")
+                                st.rerun()
 
-        # NIEUW:
-        # toekomstige maanden zijn ook selecteerbaar
-
+        st.subheader("📊 Budget versus uitgaven")
         selected_period = month_selector(
-            transaction_df,
-            key="budget_period",
-            months_forward=12,
-            months_backward=12,
+            transaction_df, key="budget_period", months_forward=12, months_backward=12
         )
-
-        budget_status = (
-            calculate_budget_status(
-                transaction_df,
-                budgets,
-                selected_period,
-            )
-        )
-
-        if (
-            selected_period
-            > current_period()
-        ):
-
-            st.info(
-                "📅 Dit is een toekomstige maand. "
-                "Er zijn nog geen werkelijke uitgaven. "
-                "De budgetten staan alvast klaar."
-            )
-
+        budget_status = calculate_budget_status(transaction_df, budgets, selected_period)
+        if selected_period > current_period():
+            st.info("Dit is een toekomstige maand. De uitgaven zijn een voorspelling op basis van budgetten.")
         for budget in budget_status:
-
-            category = (
-                budget["category"]
-            )
-
-            budget_amount = (
-                budget["budget"]
-            )
-
-            spent = (
-                budget["spent"]
-            )
-
-            remaining = (
-                budget["remaining"]
-            )
-
-            percentage = (
-                budget["percentage"]
-            )
-
-            st.subheader(
-                category
-            )
-
-            col1, col2, col3 = (
-                st.columns(3)
-            )
-
-            with col1:
-
-                st.metric(
-                    "Budget",
-                    euro(budget_amount),
-                )
-
-            with col2:
-
-                st.metric(
-                    "Uitgegeven",
-                    euro(spent),
-                )
-
-            with col3:
-
-                st.metric(
-                    "Resterend",
-                    euro(remaining),
-                )
-
-            progress = min(
-                max(
-                    percentage / 100,
-                    0,
-                ),
-                1,
-            )
-
-            st.progress(
-                progress
-            )
-
-            if budget[
-                "over_budget"
-            ]:
-
-                st.error(
-                    f"🔴 Budget overschreden "
-                    f"met "
-                    f"{euro(abs(remaining))}"
-                )
-
+            category = budget["category"]
+            budget_amount = budget["budget"]
+            spent = budget["spent"]
+            remaining = budget["remaining"]
+            percentage = budget["percentage"]
+            st.markdown(f"**{category}** — budget per maand: {euro(budget_amount)}")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Budget per maand (genormaliseerd)", euro(budget_amount))
+            col2.metric("Uitgegeven deze maand", euro(spent))
+            col3.metric("Resterend deze maand", euro(remaining))
+            st.progress(min(max(percentage / 100, 0), 1))
+            if budget["over_budget"]:
+                st.error(f"Budget overschreden met {euro(abs(remaining))}")
             elif percentage >= 80:
-
-                st.warning(
-                    f"🟠 "
-                    f"{percentage:.0f}% gebruikt."
-                )
-
+                st.warning(f"{percentage:.0f}% van het maandbudget gebruikt.")
             else:
-
-                st.success(
-                    f"🟢 "
-                    f"{percentage:.0f}% gebruikt."
-                )
-
+                st.success(f"{percentage:.0f}% van het maandbudget gebruikt.")
             st.divider()
-
     else:
-
-        st.info(
-            "Je hebt nog geen budgetten ingesteld."
-        )
+        st.info("Je hebt nog geen budgetten ingesteld.")
 
 
-# ============================================================
 # CHAPTER 6 — SETTINGS
 # ============================================================
 
