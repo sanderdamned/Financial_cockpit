@@ -131,43 +131,35 @@ def category_options():
 # ============================================================
 
 def is_transfer_series(df):
-    """
-    Returns a boolean Series identifying transfers.
-    """
+    """Identify savings/internal transfers consistently across views."""
 
     if df is None or df.empty:
-        return pd.Series(
-            dtype=bool
-        )
+        return pd.Series(dtype=bool)
+
+    transfer_mask = pd.Series(False, index=df.index)
 
     if "is_transfer" in df.columns:
-
-        return (
-            df["is_transfer"]
-            .fillna(False)
-            .astype(bool)
-        )
+        transfer_mask = transfer_mask | df["is_transfer"].fillna(False).astype(bool)
 
     if "transaction_type" in df.columns:
+        values = df["transaction_type"].fillna("").astype(str).str.lower().str.strip()
+        transfer_mask = transfer_mask | values.isin(["transfer", "overboeking", "overboekingen"])
 
-        values = (
-            df["transaction_type"]
-            .astype(str)
-            .str.lower()
-        )
+    if "category" in df.columns:
+        categories = df["category"].fillna("").astype(str).str.strip().str.lower()
+        transfer_mask = transfer_mask | categories.eq("overboeking spaargeld")
 
-        return values.isin(
-            [
-                "transfer",
-                "overboeking",
-                "overboekingen",
-            ]
-        )
-
-    return pd.Series(
-        False,
-        index=df.index,
+    descriptions = df.get("description", pd.Series("", index=df.index)).fillna("").astype(str)
+    merchants = df.get("merchant", pd.Series("", index=df.index)).fillna("").astype(str)
+    text = descriptions + " " + merchants
+    transfer_mask = transfer_mask | text.str.contains(
+        r"overboeking|eigen rekening|spaarrekening|spaargeld|transfer from|overgemaakt van|interne overboeking",
+        case=False,
+        regex=True,
+        na=False,
     )
+
+    return transfer_mask
 
 
 def without_transfers(df):
