@@ -1410,6 +1410,7 @@ def categorize_import_transaction(
     merchant,
     merchant_rules,
     flow=None,
+    amount=None,
 ):
     text = f"{description or ''} {merchant or ''}".lower()
 
@@ -1457,6 +1458,14 @@ def categorize_import_transaction(
     for category, keywords in category_rules.items():
         if category in allowed_categories and any(keyword in text for keyword in keywords):
             return category
+
+    # Kleine uitgaven is uitsluitend de fallback voor uitgaven onder €25
+    # waarvoor geen specifiekere categorie of opgeslagen regel is gevonden.
+    try:
+        if flow == "Uitgave" and amount is not None and abs(float(amount)) < 25:
+            return "Kleine uitgaven"
+    except (TypeError, ValueError):
+        pass
 
     return "Overig"
 
@@ -1637,6 +1646,7 @@ def prepare_ing_csv(
                 row["merchant"],
                 merchant_category_rules,
                 flow=row["flow"],
+                amount=row["parsed_amount"],
             ),
         axis=1,
     )
