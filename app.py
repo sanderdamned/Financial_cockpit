@@ -34,6 +34,8 @@ from financial_engine import (
     calculate_monthly_recurring_cost,
     calculate_yearly_recurring_cost,
     calculate_monthly_recurring_income,
+    calculate_forecast_data_quality,
+    generate_financial_insights,
 )
 
 
@@ -2904,11 +2906,19 @@ if chapter == "📊 Overzicht":
             "tekort."
         )
 
-    safe_to_spend = (
-        calculate_safe_to_spend(
-            forecast,
-            buffer=0,
+    with st.expander("🛟 Stel je gewenste financiële buffer in", expanded=False):
+        desired_buffer = st.number_input(
+            "Bedrag dat je deze maand wilt overhouden",
+            min_value=0.0,
+            value=float(st.session_state.get("overview_desired_buffer", 0.0)),
+            step=250.0,
+            help="Dit bedrag wordt afgetrokken van het verwachte maandoverschot. Dit is geen banksaldo of gegarandeerd besteedbaar bedrag.",
+            key="overview_desired_buffer",
         )
+
+    safe_to_spend = calculate_safe_to_spend(
+        forecast,
+        buffer=desired_buffer,
     )
 
     st.markdown(
@@ -2916,16 +2926,56 @@ if chapter == "📊 Overzicht":
         <div class="fc-insight">
             <div class="fc-insight-icon">↗</div>
             <div>
-                <div class="fc-insight-label">Ruimte om extra uit te geven</div>
+                <div class="fc-insight-label">Indicatieve extra ruimte na buffer</div>
                 <div class="fc-insight-value">{euro(safe_to_spend)}</div>
                 <div class="fc-insight-copy">
-                    Indicatie op basis van de huidige maandforecast; houd rekening met je gewenste buffer.
+                    Berekend uit het verwachte maandoverschot minus je ingestelde buffer.
+                    Dit is een prognose, geen actueel banksaldo.
                 </div>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    # --------------------------------------------------------
+    # EXPLAINABLE FINANCIAL INSIGHTS
+    # --------------------------------------------------------
+    quality = calculate_forecast_data_quality(
+        transaction_df,
+        selected_period,
+    )
+
+    st.subheader("✨ Inzichten en aandachtspunten")
+    st.caption(
+        f"Betrouwbaarheid historische basis: {quality['confidence']}. "
+        f"{quality['note']}"
+    )
+
+    insights = generate_financial_insights(
+        transaction_df,
+        selected_period,
+        forecast,
+        budget_status,
+    )
+
+    if insights:
+        for insight in insights:
+            title = insight.get("title", "Financieel inzicht")
+            message = insight.get("message", "")
+            level = insight.get("level", "info")
+
+            if level == "error":
+                st.error(f"**{title}** — {message}")
+            elif level == "warning":
+                st.warning(f"**{title}** — {message}")
+            else:
+                st.info(f"**{title}** — {message}")
+    else:
+        st.success(
+            "Geen opvallende financiële signalen gevonden voor deze periode. "
+            "Dat is geen garantie dat alle transacties of prognoses volledig zijn."
+        )
 
     # --------------------------------------------------------
     # YEAR OVERVIEW
