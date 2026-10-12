@@ -357,7 +357,7 @@ def categorize_transaction(
 
     # Alleen als geen specifieke uitgavencategorie past, gebruik Kleine uitgaven.
     try:
-        if flow == "Uitgave" and amount is not None and abs(float(amount)) < 25:
+        if flow == "Uitgave" and amount is not None and abs(float(amount)) < 15:
             return "Kleine uitgaven"
     except (TypeError, ValueError):
         pass
