@@ -4167,50 +4167,20 @@ elif chapter == "🎯 Budgetten":
                     else "Spreiding van oudere uitgaven over 36 maanden; controleer dit voorstel"
                 )
 
-                # Where the user has already configured a recurring payment,
-                # retain its real frequency and amount for the suggestion.
-                matching = [
-                    item for item in (saved_recurring or [])
-                    if str(item.get("category", "")).strip() == str(category).strip()
-                    and item.get("active", True)
-                    and item.get("flow", "Uitgave") == "Uitgave"
-                ]
-                frequency_map = {
-                    "wekelijks": ("monthly", 1),
-                    "weekly": ("monthly", 1),
-                    "maandelijks": ("monthly", 1),
-                    "monthly": ("monthly", 1),
-                    "per kwartaal": ("periodic", 3),
-                    "quarterly": ("periodic", 3),
-                    "halfjaarlijks": ("periodic", 6),
-                    "semi-annually": ("periodic", 6),
-                    "jaarlijks": ("annual", 12),
-                    "yearly": ("annual", 12),
-                    "annually": ("annual", 12),
-                }
-                for item in matching:
-                    frequency = str(item.get("frequency", "")).lower()
-                    if frequency in frequency_map:
-                        budget_type, period_months = frequency_map[frequency]
-                        planned_amount = float(item.get("expected_amount", 0) or 0)
-                        if frequency in ("wekelijks", "weekly"):
-                            planned_amount *= 52.0 / 12.0
-                        type_reason = f"Gebaseerd op opgeslagen terugkerende betaling ({item.get('frequency')})"
-                        break
-                else:
-                    # Sparse historical categories often represent annual or
-                    # periodic bills. These are estimates, and remain editable.
-                    if spending_month_count <= 3:
-                        budget_type = "annual"
-                        period_months = 12
-                        observed_years = max(1.0, history_months_covered / 12.0)
-                        planned_amount = category_total / observed_years
-                        type_reason = "Schatting van jaarlijkse uitgaven op basis van de beschikbare historie (maximaal 36 maanden)"
-                    elif spending_month_count <= 9:
-                        budget_type = "periodic"
-                        period_months = min(12, max(2, round(36 / spending_month_count)))
-                        planned_amount = category_total / max(1, spending_month_count) * period_months
-                        type_reason = f"Schatting van periodieke uitgaven; ongeveer elke {period_months} maanden"
+                # Proposals must reflect actual imported transactions, not planned
+                # recurring-payment amounts. Sparse categories are estimated from
+                # the actual history available (up to 36 completed months).
+                if spending_month_count <= 3:
+                    budget_type = "annual"
+                    period_months = 12
+                    observed_years = max(1.0, history_months_covered / 12.0)
+                    planned_amount = category_total / observed_years
+                    type_reason = "Gebaseerd op werkelijke transacties in de beschikbare historie (maximaal 36 maanden)"
+                elif spending_month_count <= 9:
+                    budget_type = "periodic"
+                    period_months = min(12, max(2, round(36 / spending_month_count)))
+                    planned_amount = category_total / max(1, spending_month_count) * period_months
+                    type_reason = f"Geschat op basis van werkelijke transacties; ongeveer elke {period_months} maanden"
 
                 suggestions.append({
                     "category": str(category),
@@ -4228,10 +4198,10 @@ elif chapter == "🎯 Budgetten":
 
     st.subheader("💡 Budgetvoorstellen op basis van je uitgaven")
     st.caption(
-        "Maandgemiddelden gebruiken de laatste 12 volledige maanden; om jaarlijkse en onregelmatige "
-        "uitgaven te herkennen kijken we tot 36 maanden terug. Periodieke frequenties worden overgenomen "
-        "uit opgeslagen terugkerende betalingen als die beschikbaar zijn. Voorstellen zijn schattingen: "
-        "controleer en wijzig ze voordat je ze opslaat."
+        "Voorstellen zijn gebaseerd op werkelijk geïmporteerde uitgaven: het maandgemiddelde gebruikt de laatste "
+        "12 volledige maanden en voor jaarlijkse of onregelmatige uitgaven kijken we tot 36 maanden terug. "
+        "Opgeslagen terugkerende betalingen overschrijven deze historische bedragen niet. Inkomsten worden niet "
+        "als uitgavenbudget voorgesteld. Controleer en wijzig elk voorstel voordat je het opslaat."
     )
 
     if suggestions:
@@ -4252,7 +4222,7 @@ elif chapter == "🎯 Budgetten":
                         with left:
                             st.markdown(f"**{item['category']}**")
                             st.caption(item["reason"])
-                            st.caption(f"Historisch uitgegeven in 12 maanden: {euro(item['historical_total'])}")
+                            st.caption(f"Totaal werkelijk uitgegeven in beschikbare historie (max. 36 maanden): {euro(item['historical_total'])}")
                         with middle:
                             unit = "per jaar" if type_value == "annual" else (
                                 f"per {item['period_months']} maanden" if type_value == "periodic" else "per maand"
