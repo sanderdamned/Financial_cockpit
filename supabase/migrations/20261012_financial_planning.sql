@@ -17,7 +17,7 @@ create table if not exists public.financial_goals (
     current_amount numeric(14,2) not null default 0,
     target_date date,
     monthly_contribution numeric(14,2) not null default 0,
-    linked_account_id bigint,
+    linked_account_id text,
     notes text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
