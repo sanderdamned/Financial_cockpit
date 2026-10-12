@@ -7,6 +7,9 @@ from financial_engine import (
     calculate_forecast_data_quality,
     calculate_historical_monthly_average,
     calculate_variable_expense_average,
+    calculate_monthly_recurring_cost,
+    calculate_recurring_remaining,
+    calculate_recurring_income_remaining,
     generate_financial_insights,
 )
 
@@ -75,6 +78,49 @@ class ForecastBaselineTests(unittest.TestCase):
         )
         self.assertEqual(result["months_available"], 3)
         self.assertEqual(result["confidence"], "Beperkt" if result["months_available"] < 4 else "Redelijk")
+
+    def test_savings_transfers_are_not_recurring_income_or_expenses(self):
+        next_month = (pd.Timestamp.today().to_period("M") + 1)
+        occurrence = (next_month.start_time + pd.Timedelta(days=4)).date().isoformat()
+        recurring = [
+            {
+                "active": True,
+                "flow": "Uitgave",
+                "category": "Overboeking spaargeld",
+                "expected_amount": 250.0,
+                "frequency": "Maandelijks",
+                "next_occurrence": occurrence,
+                "reliability": "Hoog",
+            },
+            {
+                "active": True,
+                "flow": "Uitgave",
+                "category": "Wonen",
+                "expected_amount": 900.0,
+                "frequency": "Maandelijks",
+                "next_occurrence": occurrence,
+                "reliability": "Hoog",
+            },
+            {
+                "active": True,
+                "flow": "Inkomst",
+                "category": "Overboeking spaargeld",
+                "expected_amount": 250.0,
+                "frequency": "Maandelijks",
+                "next_occurrence": occurrence,
+                "reliability": "Hoog",
+            },
+        ]
+
+        self.assertAlmostEqual(calculate_monthly_recurring_cost(recurring), 900.0)
+        self.assertAlmostEqual(
+            calculate_recurring_remaining(recurring, next_month),
+            900.0,
+        )
+        self.assertAlmostEqual(
+            calculate_recurring_income_remaining(recurring, next_month),
+            0.0,
+        )
 
     def test_insights_flag_negative_forecast_and_budget_overrun(self):
         insights = generate_financial_insights(
