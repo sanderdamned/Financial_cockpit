@@ -11,8 +11,51 @@ def prepare_transactions(transactions):
     Convert raw Supabase transactions into a clean DataFrame.
     """
 
-    if not transactions:
+    if transactions is None:
         return pd.DataFrame()
+
+    if isinstance(transactions, pd.DataFrame):
+        if transactions.empty:
+            return pd.DataFrame()
+
+        df = transactions.copy()
+
+    else:
+        if not transactions:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(transactions)
+
+    if df.empty:
+        return df
+
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(
+            df["date"],
+            errors="coerce"
+        )
+
+    if "amount" in df.columns:
+        df["amount"] = pd.to_numeric(
+            df["amount"],
+            errors="coerce"
+        )
+
+    if "flow" not in df.columns:
+        df["flow"] = "Onbekend"
+
+    if "category" not in df.columns:
+        df["category"] = "Overig"
+
+    if "merchant" not in df.columns:
+        df["merchant"] = ""
+
+    df = df[
+        df["date"].notna() &
+        df["amount"].notna()
+    ].copy()
+
+    return df
 
     df = pd.DataFrame(transactions)
 
@@ -114,6 +157,412 @@ def detect_transfer_transactions(df, days_tolerance=1, amount_tolerance=0.01):
 
 
 # ============================================================
+# RECURRING TRANSACTION DETECTION
+# ============================================================
+
+def detect_recurring_transactions(df):
+    """
+    Detect recurring transactions.
+
+    Rules:
+
+    1. One-time transactions below €150:
+       - ignored completely
+
+    2. One-time transactions of €150 or more:
+       - treated as yearly recurring
+       - marked as is_one_time_large=True
+
+    3. Multiple transactions:
+
+       WEEKLY:
+       - transaction must occur in at least 60% of the
+         relevant weeks
+       - interval must be approximately weekly
+
+       MONTHLY:
+       - transaction must occur in each of the last 3 months
+         OR
+       - transaction must occur in at least 60% of the
+         relevant weeks
+       - interval must be approximately monthly
+
+       QUARTERLY:
+       - interval approximately 3 months
+
+       YEARLY:
+       - interval approximately 1 year
+
+    4. Amount variation determines reliability.
+
+    5. Low reliability transactions are retained as detected
+       data, but excluded from recurring financial calculations.
+    """
+
+    if df is None or df.empty:
+        return []
+
+    required = {
+        "date",
+        "merchant",
+        "amount",
+        "flow",
+    }
+
+    if not required.issubset(df.columns):
+        return []
+
+    data = df.copy()
+
+    data["date"] = pd.to_datetime(
+        data["date"],
+        errors="coerce",
+    )
+
+    data["amount"] = pd.to_numeric(
+        data["amount"],
+        errors="coerce",
+    )
+
+    data = data.dropna(
+        subset=[
+            "date",
+            "amount",
+        ]
+    )
+
+    # Alleen uitgaven analyseren
+    data = data[
+        data["flow"] == "Uitgave"
+    ]
+
+    if data.empty:
+        return []
+
+    results = []
+
+    # ========================================================
+    # ANALYSE PER MERCHANT
+    # ========================================================
+
+    for merchant, group in data.groupby("merchant"):
+
+        group = group.sort_values("date").copy()
+
+        if group.empty:
+            continue
+
+        transaction_count = len(group)
+
+        amounts = group["amount"].abs()
+
+        mean_amount = float(
+            amounts.mean()
+        )
+
+        if mean_amount == 0:
+            continue
+
+        # ====================================================
+        # ONE-TIME TRANSACTION
+        # ====================================================
+
+        if transaction_count == 1:
+
+            amount = float(
+                amounts.iloc[0]
+            )
+
+            # Eenmalig onder €150:
+            # volledig negeren.
+            if amount < 150:
+                continue
+
+            transaction_date = group["date"].iloc[0]
+
+            next_occurrence = (
+                transaction_date
+                + pd.DateOffset(years=1)
+            )
+
+            if (
+                "category" in group.columns
+                and not group["category"].mode().empty
+            ):
+                category = (
+                    group["category"]
+                    .mode()
+                    .iloc[0]
+                )
+            else:
+                category = "Overig"
+
+            results.append(
+                {
+                    "merchant": merchant,
+                    "category": category,
+                    "frequency": "Jaarlijks",
+                    "expected_amount": amount,
+                    "last_occurrence": (
+                        transaction_date
+                        .date()
+                        .isoformat()
+                    ),
+                    "next_occurrence": (
+                        next_occurrence
+                        .date()
+                        .isoformat()
+                    ),
+                    "reliability": "Hoog",
+                    "flow": "Uitgave",
+                    "is_one_time_large": True,
+                }
+            )
+
+            continue
+
+        # ====================================================
+        # TRANSACTION INTERVALS
+        # ====================================================
+
+        dates = group["date"].tolist()
+
+        intervals = [
+            (
+                dates[index]
+                - dates[index - 1]
+            ).days
+            for index in range(
+                1,
+                len(dates),
+            )
+        ]
+
+        if not intervals:
+            continue
+
+        median_interval = float(
+            pd.Series(intervals).median()
+        )
+
+        # ====================================================
+        # WEEK COVERAGE
+        # ====================================================
+
+        group["week"] = (
+            group["date"]
+            .dt.to_period("W")
+        )
+
+        first_week = (
+            group["date"]
+            .min()
+            .to_period("W")
+        )
+
+        last_week = (
+            group["date"]
+            .max()
+            .to_period("W")
+        )
+
+        total_weeks = (
+            last_week.ordinal
+            - first_week.ordinal
+            + 1
+        )
+
+        weeks_with_transaction = (
+            group["week"]
+            .nunique()
+        )
+
+        weekly_coverage = (
+            weeks_with_transaction /
+            total_weeks
+            if total_weeks > 0
+            else 0
+        )
+
+        weekly_60_percent = (
+            weekly_coverage >= 0.60
+        )
+
+        # ====================================================
+        # LAST 3 MONTHS
+        # ====================================================
+
+        group["month"] = (
+            group["date"]
+            .dt.to_period("M")
+        )
+
+        latest_month = (
+            group["date"]
+            .max()
+            .to_period("M")
+        )
+
+        last_three_months = {
+            latest_month,
+            latest_month - 1,
+            latest_month - 2,
+        }
+
+        months_with_transaction = set(
+            group["month"].unique()
+        )
+
+        last_3_months_present = (
+            last_three_months
+            .issubset(
+                months_with_transaction
+            )
+        )
+
+        # ====================================================
+        # DETERMINE FREQUENCY
+        # ====================================================
+
+        frequency = None
+        days = None
+
+        # ----------------------------------------------------
+        # WEEKLY
+        # ----------------------------------------------------
+
+        if (
+            6 <= median_interval <= 8
+            and weekly_60_percent
+        ):
+
+            frequency = "Wekelijks"
+            days = 7
+
+        # ----------------------------------------------------
+        # MONTHLY
+        # ----------------------------------------------------
+
+        elif (
+            25 <= median_interval <= 35
+            and (
+                weekly_60_percent
+                or last_3_months_present
+            )
+        ):
+
+            frequency = "Maandelijks"
+            days = 30
+
+        # ----------------------------------------------------
+        # QUARTERLY
+        # ----------------------------------------------------
+
+        elif 80 <= median_interval <= 100:
+
+            frequency = "Per kwartaal"
+            days = 90
+
+        # ----------------------------------------------------
+        # YEARLY
+        # ----------------------------------------------------
+
+        elif 350 <= median_interval <= 380:
+
+            frequency = "Jaarlijks"
+            days = 365
+
+        # Geen herkenbaar patroon
+        else:
+            continue
+
+        # ====================================================
+        # AMOUNT VARIATION
+        # ====================================================
+
+        variation = float(
+            (
+                amounts.max()
+                - amounts.min()
+            )
+            / mean_amount
+        )
+
+        if variation <= 0.15:
+
+            reliability = "Hoog"
+
+        elif variation <= 0.30:
+
+            reliability = "Gemiddeld"
+
+        else:
+
+            reliability = "Laag"
+
+        # ====================================================
+        # CATEGORY
+        # ====================================================
+
+        if (
+            "category" in group.columns
+            and not group["category"].mode().empty
+        ):
+
+            category = (
+                group["category"]
+                .mode()
+                .iloc[0]
+            )
+
+        else:
+
+            category = "Overig"
+
+        # ====================================================
+        # OCCURRENCES
+        # ====================================================
+
+        last_occurrence = (
+            group["date"].max()
+        )
+
+        next_occurrence = (
+            last_occurrence
+            + pd.Timedelta(days=days)
+        )
+
+        # ====================================================
+        # RESULT
+        # ====================================================
+
+        results.append(
+            {
+                "merchant": merchant,
+                "category": category,
+                "frequency": frequency,
+                "expected_amount": mean_amount,
+                "last_occurrence": (
+                    last_occurrence
+                    .date()
+                    .isoformat()
+                ),
+                "next_occurrence": (
+                    next_occurrence
+                    .date()
+                    .isoformat()
+                ),
+                "reliability": reliability,
+                "flow": "Uitgave",
+                "is_one_time_large": False,
+            }
+        )
+
+    return results
+
+
+
+# ============================================================
 # FILTER REAL CASHFLOW
 # ============================================================
 
@@ -136,13 +585,18 @@ def exclude_transfers(df):
 # MONTHLY METRICS
 # ============================================================
 
-def calculate_monthly_metrics(df, period=None, exclude_internal_transfers=True):
+def calculate_monthly_metrics(
+    df,
+    period=None,
+    exclude_internal_transfers=True
+):
 
     if df.empty:
         return {
             "income": 0.0,
             "expenses": 0.0,
             "net": 0.0,
+            "savings_rate": 0.0,
         }
 
     period_df = df.copy()
@@ -165,10 +619,19 @@ def calculate_monthly_metrics(df, period=None, exclude_internal_transfers=True):
         "amount"
     ].abs().sum()
 
+    net = income - expenses
+
+    savings_rate = (
+        (net / income) * 100
+        if income > 0
+        else 0.0
+    )
+
     return {
         "income": float(income),
         "expenses": float(expenses),
-        "net": float(income - expenses),
+        "net": float(net),
+        "savings_rate": float(savings_rate),
     }
 
 
@@ -352,6 +815,10 @@ def calculate_monthly_recurring_cost(
         if item.get("flow", "Uitgave") != "Uitgave":
             continue
 
+        # Lage betrouwbaarheid niet meenemen
+        if item.get("reliability") == "Laag":
+            continue
+
         amount = float(
             item.get("expected_amount", 0) or 0
         )
@@ -365,6 +832,38 @@ def calculate_monthly_recurring_cost(
         )
 
     return float(monthly_cost)
+
+# ============================================================
+# YEARLY RECURRING COST
+# ============================================================
+
+def calculate_yearly_recurring_cost(
+    recurring_transactions
+):
+
+    yearly_cost = 0.0
+
+    for item in recurring_transactions:
+
+        if not item.get("active", True):
+            continue
+
+        if item.get("flow", "Uitgave") != "Uitgave":
+            continue
+
+        if item.get("reliability") == "Laag":
+            continue
+
+        if item.get("frequency") != "Jaarlijks":
+            continue
+
+        amount = float(
+            item.get("expected_amount", 0) or 0
+        )
+
+        yearly_cost += amount
+
+    return float(yearly_cost)
 
 
 # ============================================================
