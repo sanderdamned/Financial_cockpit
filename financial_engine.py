@@ -1804,6 +1804,201 @@ def calculate_financial_health(
 
 
 # ============================================================
+# FORECAST QUALITY AND ACTIONABLE INSIGHTS
+# ============================================================
+
+def calculate_forecast_data_quality(df, period, months=6):
+    """Describe how much completed-month history supports a forecast."""
+    try:
+        selected_period = pd.Period(period, freq="M")
+    except Exception:
+        selected_period = pd.Timestamp.today().to_period("M")
+
+    current_month = pd.Timestamp.today().to_period("M")
+    reference_month = min(selected_period - 1, current_month - 1)
+    start_month = reference_month - (max(1, int(months)) - 1)
+
+    if df is None or df.empty or "date" not in df.columns:
+        available_months = 0
+    else:
+        dates = pd.to_datetime(df["date"], errors="coerce")
+        transaction_months = dates.dropna().dt.to_period("M")
+        available_months = int(
+            transaction_months[
+                (transaction_months >= start_month)
+                & (transaction_months <= reference_month)
+            ].nunique()
+        )
+
+    if available_months >= 4:
+        confidence = "Redelijk"
+        note = (
+            f"Gebaseerd op {available_months} volledig afgesloten "
+            "maanden met transacties."
+        )
+    elif available_months >= 2:
+        confidence = "Beperkt"
+        note = (
+            f"Er zijn {available_months} afgesloten historische maanden "
+            "beschikbaar. Zie de prognose als een indicatie."
+        )
+    else:
+        confidence = "Laag"
+        note = (
+            "Er is weinig volledige historische data. De prognose kan "
+            "sterk afwijken en leunt relatief meer op terugkerende betalingen."
+        )
+
+    return {
+        "months_available": available_months,
+        "confidence": confidence,
+        "note": note,
+    }
+
+
+def generate_financial_insights(
+    df,
+    period,
+    forecast,
+    budget_status=None,
+):
+    """
+    Return explainable financial alerts based on the selected period.
+    Insights are descriptive signals, not financial advice.
+    """
+    insights = []
+    budget_status = budget_status or []
+
+    projected_net = float(
+        (forecast or {}).get("projected_net", 0) or 0
+    )
+    projected_income = float(
+        (forecast or {}).get("projected_income", 0) or 0
+    )
+    projected_expenses = float(
+        (forecast or {}).get("projected_expenses", 0) or 0
+    )
+
+    if projected_net < 0:
+        insights.append({
+            "level": "error",
+            "title": "Verwacht maandtekort",
+            "message": (
+                f"De prognose komt ongeveer €{abs(projected_net):,.2f} "
+                "negatief uit: verwachte uitgaven zijn hoger dan inkomsten."
+            ).replace(",", "X").replace(".", ",").replace("X", "."),
+        })
+    elif projected_income > 0 and projected_expenses > projected_income * 0.9:
+        insights.append({
+            "level": "warning",
+            "title": "Kleine financiële marge",
+            "message": (
+                "De verwachte uitgaven gebruiken meer dan 90% van de "
+                "verwachte inkomsten. Houd extra ruimte aan voor onverwachte kosten."
+            ),
+        })
+
+    for item in budget_status:
+        category = str(item.get("category", "Categorie"))
+        percentage = float(item.get("percentage", 0) or 0)
+        remaining = float(item.get("remaining", 0) or 0)
+
+        if item.get("over_budget", False):
+            insights.append({
+                "level": "error",
+                "title": f"Budget overschreden: {category}",
+                "message": (
+                    f"Je zit €{abs(remaining):,.2f} boven het ingestelde "
+                    "budget.".replace(",", "X").replace(".", ",").replace("X", ".")
+                ),
+            })
+        elif percentage >= 80:
+            insights.append({
+                "level": "warning",
+                "title": f"Budget bijna op: {category}",
+                "message": (
+                    f"{percentage:.0f}% van het budget is gebruikt; "
+                    f"er resteert €{remaining:,.2f}."
+                ).replace(",", "X").replace(".", ",").replace("X", "."),
+            })
+
+    try:
+        selected_period = pd.Period(period, freq="M")
+    except Exception:
+        selected_period = pd.Timestamp.today().to_period("M")
+
+    current_month = pd.Timestamp.today().to_period("M")
+    if (
+        df is not None
+        and not df.empty
+        and selected_period <= current_month
+        and {"date", "flow", "amount"}.issubset(df.columns)
+    ):
+        clean_df = exclude_transfers(df).copy()
+        clean_df["date"] = pd.to_datetime(clean_df["date"], errors="coerce")
+        clean_df["amount"] = pd.to_numeric(clean_df["amount"], errors="coerce").fillna(0)
+        clean_df = clean_df.dropna(subset=["date"])
+        clean_df["month"] = clean_df["date"].dt.to_period("M")
+
+        prior_months = [
+            selected_period - offset
+            for offset in (1, 2, 3)
+        ]
+        historical_df = clean_df[
+            clean_df["month"].isin(prior_months)
+            & (clean_df["flow"] == "Uitgave")
+        ].copy()
+        current_df = clean_df[
+            (clean_df["month"] == selected_period)
+            & (clean_df["flow"] == "Uitgave")
+        ].copy()
+
+        if (
+            not historical_df.empty
+            and not current_df.empty
+            and "category" in clean_df.columns
+        ):
+            historical_months = int(historical_df["month"].nunique())
+            if historical_months >= 2:
+                historical_df["_expense"] = historical_df["amount"].abs()
+                current_df["_expense"] = current_df["amount"].abs()
+                averages = (
+                    historical_df.groupby("category")["_expense"].sum()
+                    / historical_months
+                )
+                current_spend = current_df.groupby("category")["_expense"].sum()
+
+                if selected_period == current_month:
+                    today = pd.Timestamp.today().normalize()
+                    elapsed_days = max(1, today.day)
+                    days_in_month = selected_period.days_in_month
+                    current_spend = current_spend * days_in_month / elapsed_days
+
+                anomalies = []
+                for category, amount in current_spend.items():
+                    average = float(averages.get(category, 0) or 0)
+                    amount = float(amount or 0)
+                    if amount >= 50 and amount > max(average * 1.3, average + 50):
+                        anomalies.append((category, amount, average))
+
+                anomalies.sort(key=lambda item: item[1] - item[2], reverse=True)
+                for category, amount, average in anomalies[:3]:
+                    extra = amount - average
+                    insights.append({
+                        "level": "info",
+                        "title": f"Uitgavenpatroon: {category}",
+                        "message": (
+                            f"Op basis van de huidige uitgaven ligt het "
+                            f"maandtempo ongeveer €{extra:,.0f} boven het "
+                            "gemiddelde van de vorige beschikbare maanden. "
+                            "Dit is een signaal, geen definitieve overschrijding."
+                        ).replace(",", "X").replace(".", ",").replace("X", "."),
+                    })
+
+    return insights[:6]
+
+
+# ============================================================
 # SAFE TO SPEND 2.0
 # ============================================================
 
