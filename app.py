@@ -1438,6 +1438,7 @@ with st.sidebar:
             "🔄 Terugkerend",
             "🎯 Budgetten",
             "💼 Vermogen & doelen",
+            "📆 Jaaranalyse",
             "⚙️ Instellingen",
         ],
         label_visibility="collapsed",
@@ -3873,6 +3874,61 @@ elif chapter == "🎯 Budgetten":
 # ============================================================
 # CHAPTER 6 — SETTINGS
 # ============================================================
+
+elif chapter == "📆 Jaaranalyse":
+
+    st.title("📆 Jaaranalyse")
+    st.caption("Vergelijk de drie meest recente volledige kalenderjaren. Het lopende jaar wordt apart getoond.")
+
+    if transaction_df.empty:
+        st.info("Er zijn nog geen transacties beschikbaar.")
+    else:
+        annual_df = transaction_df.copy()
+        annual_df["date"] = pd.to_datetime(annual_df["date"], errors="coerce")
+        annual_df = annual_df[annual_df["date"].notna()]
+        annual_df = annual_df[~annual_df.get("is_transfer", pd.Series(False, index=annual_df.index)).fillna(False)]
+        current_year = date.today().year
+        full_years = [current_year - 3, current_year - 2, current_year - 1]
+        all_years = full_years + [current_year]
+        available_years = sorted(annual_df["date"].dt.year.unique().tolist())
+        missing_years = [year for year in full_years if year not in available_years]
+        if missing_years:
+            st.warning("Voor deze volledige kalenderjaren zijn geen transacties gevonden: " + ", ".join(map(str, missing_years)) + ". Controleer of alle bankbestanden zijn geïmporteerd.")
+        summary_rows = []
+        for year in all_years:
+            year_df = annual_df[annual_df["date"].dt.year == year]
+            income = float(year_df.loc[year_df["flow"] == "Inkomst", "amount"].sum())
+            expenses = float(year_df.loc[year_df["flow"] == "Uitgave", "amount"].abs().sum())
+            summary_rows.append({
+                "Jaar": year,
+                "Periode": "Lopend jaar" if year == current_year else "Volledig kalenderjaar",
+                "Inkomsten": income,
+                "Uitgaven": expenses,
+                "Netto": income - expenses,
+                "Transacties": len(year_df),
+                "Maanden met data": int(year_df["date"].dt.to_period("M").nunique()),
+            })
+        summary = pd.DataFrame(summary_rows)
+        st.dataframe(
+            summary.style.format({"Inkomsten": "€ {:,.2f}", "Uitgaven": "€ {:,.2f}", "Netto": "€ {:,.2f}"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.subheader("Uitgaven per categorie")
+        expense_df = annual_df[annual_df["flow"] == "Uitgave"].copy()
+        if not expense_df.empty:
+            expense_df["Bedrag"] = expense_df["amount"].abs()
+            category_year = expense_df[expense_df["date"].dt.year.isin(all_years)].pivot_table(
+                index="category", columns=expense_df["date"].dt.year, values="Bedrag", aggfunc="sum", fill_value=0
+            )
+            category_year.columns = [str(c) for c in category_year.columns]
+            st.dataframe(category_year.style.format("€ {:,.2f}"), use_container_width=True)
+        else:
+            st.info("Geen uitgaven gevonden voor de geselecteerde periode.")
+
+        st.caption("Deze analyse gebruikt alle transacties die de app uit Supabase kan ophalen voor de geselecteerde rekeningweergave. Een ontbrekend jaar kan ook betekenen dat historische banktransacties nog niet zijn geïmporteerd.")
+
 
 elif chapter == "💼 Vermogen & doelen":
 
