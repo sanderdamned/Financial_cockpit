@@ -10,6 +10,8 @@ from financial_engine import (
     calculate_monthly_recurring_cost,
     calculate_recurring_remaining,
     calculate_recurring_income_remaining,
+    calculate_recurring_transfer_net_in_period,
+    calculate_projected_account_balance,
     generate_financial_insights,
 )
 
@@ -121,6 +123,40 @@ class ForecastBaselineTests(unittest.TestCase):
             calculate_recurring_income_remaining(recurring, next_month),
             0.0,
         )
+
+    def test_account_balance_forecast_includes_future_savings_transfer(self):
+        current_month = pd.Timestamp.today().to_period("M")
+        next_month = current_month + 1
+        df = sample_monthly_transactions()
+        df = df[df["date"].dt.to_period("M") < current_month].copy()
+
+        recurring = [{
+            "active": True,
+            "flow": "Uitgave",
+            "category": "Overboeking spaargeld",
+            "expected_amount": 250.0,
+            "frequency": "Maandelijks",
+            "next_occurrence": (
+                next_month.start_time + pd.Timedelta(days=4)
+            ).date().isoformat(),
+            "reliability": "Hoog",
+        }]
+
+        transfer_net = calculate_recurring_transfer_net_in_period(
+            recurring,
+            next_month,
+        )
+        self.assertAlmostEqual(transfer_net, -250.0)
+
+        result = calculate_projected_account_balance(
+            1000.0,
+            pd.Timestamp.today().date().isoformat(),
+            df,
+            recurring,
+            next_month,
+        )
+        self.assertTrue(result["available"])
+        self.assertAlmostEqual(result["projected_balance"], 2350.0)
 
     def test_insights_flag_negative_forecast_and_budget_overrun(self):
         insights = generate_financial_insights(
