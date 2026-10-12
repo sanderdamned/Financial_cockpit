@@ -580,24 +580,19 @@ def exclude_transfers(df):
     if "is_transfer" in result.columns:
         result = result[~result["is_transfer"].fillna(False)].copy()
 
-    # Transfers into savings/current accounts are visible in source reporting,
-    # but must not inflate real income or historical income forecasts.
-    if "flow" in result.columns and "category" in result.columns:
-        internal_income = (
-            result["flow"].eq("Inkomst")
-            & result["category"].fillna("").astype(str).str.strip().str.lower().eq("overboeking spaargeld")
-        )
-        result = result[~internal_income].copy()
+    # Savings/internal transfers are not income or expenses. Exclude both
+    # the incoming and outgoing leg from all ordinary financial calculations.
+    if "category" in result.columns:
+        internal_category = result["category"].fillna("").astype(str).str.strip().str.lower().eq("overboeking spaargeld")
+        result = result[~internal_category].copy()
 
-    if "flow" in result.columns:
-        descriptions = result.get("description", pd.Series("", index=result.index)).fillna("").astype(str)
-        merchants = result.get("merchant", pd.Series("", index=result.index)).fillna("").astype(str)
-        transfer_like = (descriptions + " " + merchants).str.contains(
-            r"overboeking|eigen rekening|spaarrekening|spaargeld|transfer from|overgemaakt van|interne overboeking",
-            case=False, regex=True, na=False,
-        )
-        transfer_income = transfer_like & result["flow"].eq("Inkomst")
-        result = result[~transfer_income].copy()
+    descriptions = result.get("description", pd.Series("", index=result.index)).fillna("").astype(str)
+    merchants = result.get("merchant", pd.Series("", index=result.index)).fillna("").astype(str)
+    transfer_like = (descriptions + " " + merchants).str.contains(
+        r"overboeking|eigen rekening|spaarrekening|spaargeld|transfer from|overgemaakt van|interne overboeking",
+        case=False, regex=True, na=False,
+    )
+    result = result[~transfer_like].copy()
 
     return result
 
