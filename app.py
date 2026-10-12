@@ -18,6 +18,7 @@ from database import Database
 from ui_helpers import (
     euro,
     without_transfers,
+    is_transfer_series,
     render_transaction_metrics,
 )
 
@@ -2516,9 +2517,10 @@ if chapter == "📊 Overzicht":
                 "💸 Uitgaven per categorie"
             )
 
-            expense_df = month_df[
-                month_df["flow"]
-                == "Uitgave"
+            # Internal savings transfers are shown separately below, not as expenses.
+            clean_month_df = without_transfers(month_df)
+            expense_df = clean_month_df[
+                clean_month_df["flow"] == "Uitgave"
             ].copy()
 
             if not expense_df.empty:
@@ -2610,6 +2612,26 @@ if chapter == "📊 Overzicht":
             )
         else:
             st.info("Geen inkomsten in deze maand.")
+
+        # Show savings/internal transfers separately from income and expenses.
+        transfer_rows = month_df.loc[is_transfer_series(month_df)].copy()
+        if not transfer_rows.empty:
+            st.subheader("🔁 Overboekingen spaargeld (geen inkomsten of uitgaven)")
+            transfer_rows["Bedrag"] = transfer_rows["amount"].abs()
+            transfer_rows["Soort"] = transfer_rows["flow"].map({
+                "Inkomst": "Bijschrijving naar rekening",
+                "Uitgave": "Afschrijving van rekening",
+            }).fillna("Overboeking")
+            transfer_in = transfer_rows.loc[transfer_rows["flow"] == "Inkomst", "amount"].abs().sum()
+            transfer_out = transfer_rows.loc[transfer_rows["flow"] == "Uitgave", "amount"].abs().sum()
+            transfer_col1, transfer_col2 = st.columns(2)
+            transfer_col1.metric("Overboekingen ontvangen", euro(transfer_in))
+            transfer_col2.metric("Overboekingen verstuurd", euro(transfer_out))
+            transfer_cols = [
+                col for col in ["date", "description", "merchant", "Bedrag", "Soort", "category"]
+                if col in transfer_rows.columns
+            ]
+            st.dataframe(transfer_rows[transfer_cols], use_container_width=True, hide_index=True)
 
     else:
 
@@ -3223,9 +3245,10 @@ elif chapter == "🏷️ Categorieën":
         errors="coerce",
     )
 
+    category_transfer_mask = is_transfer_series(df)
     expenses = df[
-        df["flow"]
-        == "Uitgave"
+        (df["flow"] == "Uitgave")
+        & ~category_transfer_mask
     ].copy()
 
     if expenses.empty:
