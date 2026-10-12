@@ -1,5 +1,6 @@
 import io
 import hashlib
+from datetime import date, timedelta
 from datetime import date
 
 import pandas as pd
@@ -747,17 +748,29 @@ def load_accounts(user_id):
         return []
 
 
+# ============================================================
+# DATABASE — TRANSACTIONS
+# ============================================================
+
+def _load_transactions_paginated(user_id, account_id=None, page_size=1000):
 def load_transactions(
     user_id,
     account_id,
 ):
 
-    try:
+    """Fetch every matching transaction in pages; PostgREST defaults can cap rows."""
+    rows = []
+    start = 0
 
-        result = (
+    while True:
+        query = (
             supabase
             .table("transactions")
             .select("*")
+            .eq("user_id", user_id)
+            .order("date", desc=True)
+            .order("id", desc=True)
+            .range(start, start + page_size - 1)
             .eq(
                 "user_id",
                 user_id,
@@ -773,24 +786,35 @@ def load_transactions(
             .execute()
         )
 
-        return result.data or []
+        if account_id is not None:
+            query = query.eq("account_id", account_id)
 
-    except Exception as e:
+        page = query.execute().data or []
+        rows.extend(page)
 
+        if len(page) < page_size:
+            break
         st.error(
             f"❌ Transacties konden niet "
             f"worden geladen: {e}"
         )
 
-        return []
+        start += page_size
+
+    return rows
 
 
+def load_transactions(user_id, account_id):
 def load_all_transactions(
     user_id,
 ):
 
     try:
+        return _load_transactions_paginated(user_id, account_id)
 
+    except Exception as e:
+        st.error(f"❌ Transacties konden niet worden geladen: {e}")
+        return []
         result = (
             supabase
             .table("transactions")
@@ -806,15 +830,18 @@ def load_all_transactions(
             .execute()
         )
 
-        return result.data or []
 
-    except Exception as e:
+def load_all_transactions(user_id):
 
+    try:
+        return _load_transactions_paginated(user_id)
         st.error(
             f"❌ Alle transacties konden niet "
             f"worden geladen: {e}"
         )
 
+    except Exception as e:
+        st.error(f"❌ Alle transacties konden niet worden geladen: {e}")
         return []
 
 
@@ -884,6 +911,58 @@ def save_budget(
 
         return None
 
+
+# ============================================================
+# DATABASE — FINANCIAL GOALS AND PERIOD BUDGET PLANS
+# ============================================================
+
+def load_financial_goals(user_id):
+    try:
+        return (
+            supabase.table("financial_goals")
+            .select("*").eq("user_id", user_id)
+            .order("target_date").execute().data or []
+        )
+    except Exception as e:
+        st.error(f"❌ Spaardoelen konden niet worden geladen. Controleer of de SQL-migratie is uitgevoerd: {e}")
+        return []
+
+
+def save_financial_goal(user_id, values):
+    try:
+        payload = dict(values)
+        payload["user_id"] = user_id
+        return supabase.table("financial_goals").insert(payload).execute().data
+    except Exception as e:
+        st.error(f"❌ Spaardoel kon niet worden opgeslagen: {e}")
+        return None
+
+
+def load_budget_plans(user_id):
+    try:
+        return (
+            supabase.table("budget_plans").select("*")
+            .eq("user_id", user_id).order("period_start")
+            .order("category").execute().data or []
+        )
+    except Exception as e:
+        st.error(f"❌ Budgetplanning kon niet worden geladen. Controleer of de SQL-migratie is uitgevoerd: {e}")
+        return []
+
+
+def save_budget_plan(user_id, values):
+    try:
+        payload = dict(values)
+        payload["user_id"] = user_id
+        return supabase.table("budget_plans").insert(payload).execute().data
+    except Exception as e:
+        st.error(f"❌ Budgetvoorstel kon niet worden opgeslagen: {e}")
+        return None
+
+
+# ============================================================
+# DATABASE — RECURRING
+# ============================================================
 
 def load_recurring_transactions(
     user_id,
@@ -2161,6 +2240,8 @@ with st.sidebar:
             "🏷️ Categorieën",
             "🔄 Terugkerend",
             "🎯 Budgetten",
+            "💼 Vermogen & doelen",
+            "📆 Jaaranalyse",
             "⚙️ Instellingen",
         ],
         label_visibility="collapsed",
@@ -4306,6 +4387,210 @@ elif chapter == "🎯 Budgetten":
 # CHAPTER 6 — SETTINGS
 # ============================================================
 
+elif chapter == "📆 Jaaranalyse":
+
+    st.title("📆 Jaaranalyse")
+    st.caption("Vergelijk de drie meest recente volledige kalenderjaren. Het lopende jaar wordt apart getoond.")
+
+    if transaction_df.empty:
+        st.info("Er zijn nog geen transacties beschikbaar.")
+    else:
+        annual_df = transaction_df.copy()
+        annual_df["date"] = pd.to_datetime(annual_df["date"], errors="coerce")
+        annual_df = annual_df[annual_df["date"].notna()]
+        annual_df = annual_df[~annual_df.get("is_transfer", pd.Series(False, index=annual_df.index)).fillna(False)]
+        current_year = date.today().year
+        full_years = [current_year - 3, current_year - 2, current_year - 1]
+        all_years = full_years + [current_year]
+        available_years = sorted(annual_df["date"].dt.year.unique().tolist())
+        missing_years = [year for year in full_years if year not in available_years]
+        if missing_years:
+            st.warning("Voor deze volledige kalenderjaren zijn geen transacties gevonden: " + ", ".join(map(str, missing_years)) + ". Controleer of alle bankbestanden zijn geïmporteerd.")
+        summary_rows = []
+        for year in all_years:
+            year_df = annual_df[annual_df["date"].dt.year == year]
+            income = float(year_df.loc[year_df["flow"] == "Inkomst", "amount"].sum())
+            expenses = float(year_df.loc[year_df["flow"] == "Uitgave", "amount"].abs().sum())
+            summary_rows.append({
+                "Jaar": year,
+                "Periode": "Lopend jaar" if year == current_year else "Volledig kalenderjaar",
+                "Inkomsten": income,
+                "Uitgaven": expenses,
+                "Netto": income - expenses,
+                "Transacties": len(year_df),
+                "Maanden met data": int(year_df["date"].dt.to_period("M").nunique()),
+            })
+        summary = pd.DataFrame(summary_rows)
+        st.dataframe(
+            summary.style.format({"Inkomsten": "€ {:,.2f}", "Uitgaven": "€ {:,.2f}", "Netto": "€ {:,.2f}"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.subheader("Uitgaven per categorie")
+        expense_df = annual_df[annual_df["flow"] == "Uitgave"].copy()
+        if not expense_df.empty:
+            expense_df["Bedrag"] = expense_df["amount"].abs()
+            category_year = expense_df[expense_df["date"].dt.year.isin(all_years)].pivot_table(
+                index="category", columns=expense_df["date"].dt.year, values="Bedrag", aggfunc="sum", fill_value=0
+            )
+            category_year.columns = [str(c) for c in category_year.columns]
+            st.dataframe(category_year.style.format("€ {:,.2f}"), use_container_width=True)
+        else:
+            st.info("Geen uitgaven gevonden voor de geselecteerde periode.")
+
+        st.caption("Deze analyse gebruikt alle transacties die de app uit Supabase kan ophalen voor de geselecteerde rekeningweergave. Een ontbrekend jaar kan ook betekenen dat historische banktransacties nog niet zijn geïmporteerd.")
+
+
+elif chapter == "💼 Vermogen & doelen":
+
+    st.title("💼 Vermogen & spaardoelen")
+    st.caption("Beheer actuele saldi, reserveer geld voor specifieke doelen en plan toekomstige grote uitgaven.")
+
+    total_liquid = sum(float(a.get("current_balance") or 0) for a in accounts if a.get("is_liquid", True) and "beleg" not in str(a.get("account_type", "")).lower())
+    total_investments = sum(float(a.get("current_balance") or 0) for a in accounts if "beleg" in str(a.get("account_type", "")).lower())
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Totaal ingevoerde liquide middelen", euro(total_liquid))
+    col2.metric("Beleggingsrekeningen (ingevoerd saldo)", euro(total_investments))
+    col3.metric("Rekeningen", len(accounts))
+    st.info("Vul saldi in via Instellingen → Actuele saldi. Beleggingswaarden zijn handmatig ingevoerd en geen live beurskoersen.")
+
+    st.subheader("Rekeningen en bestemming")
+    account_rows = []
+    for account in accounts:
+        account_rows.append({
+            "Rekening": account.get("name", "Onbekend"),
+            "Type": account.get("account_type", "Onbekend"),
+            "Bank": account.get("bank", ""),
+            "Saldo": float(account.get("current_balance") or 0),
+            "Peildatum": account.get("balance_as_of") or "Niet ingevuld",
+            "Bestemming": account.get("savings_purpose") or "Vrij beschikbaar / niet ingesteld",
+        })
+    st.dataframe(pd.DataFrame(account_rows), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("Spaardoelen en grote toekomstige uitgaven")
+    with st.form("new_financial_goal"):
+        goal_name = st.text_input("Doel", placeholder="Bijv. auto, keuken, badkamer of noodreserve")
+        goal_type = st.selectbox("Type", ["Spaardoel", "Grote uitgave", "Noodreserve", "Belegging"])
+        goal_target = st.number_input("Doelbedrag (€)", min_value=0.0, step=500.0, value=5000.0)
+        goal_current = st.number_input("Al gereserveerd (€)", min_value=0.0, step=100.0, value=0.0)
+        goal_date = st.date_input("Gewenste datum", value=date(date.today().year + 1, date.today().month, min(date.today().day, 28)))
+        goal_monthly = st.number_input("Maandelijkse inleg (€)", min_value=0.0, step=25.0, value=0.0)
+        goal_notes = st.text_input("Notities (optioneel)")
+        goal_submitted = st.form_submit_button("Spaardoel opslaan", type="primary")
+    if goal_submitted:
+        if not goal_name.strip():
+            st.error("Geef het spaardoel een naam.")
+        else:
+            months_left = max(1, (goal_date.year - date.today().year) * 12 + goal_date.month - date.today().month)
+            remaining_goal = max(0.0, goal_target - goal_current)
+            monthly_suggested = remaining_goal / months_left
+            result = save_financial_goal(user_id, {
+                "name": goal_name.strip(),
+                "goal_type": goal_type,
+                "target_amount": float(goal_target),
+                "current_amount": float(goal_current),
+                "target_date": goal_date.isoformat(),
+                "monthly_contribution": float(goal_monthly or monthly_suggested),
+                "notes": goal_notes.strip() or None,
+            })
+            if result is not None:
+                st.success("Spaardoel opgeslagen.")
+                st.rerun()
+
+    goals = load_financial_goals(user_id)
+    if goals:
+        for goal in goals:
+            target = float(goal.get("target_amount") or 0)
+            saved = float(goal.get("current_amount") or 0)
+            remaining = max(0.0, target - saved)
+            monthly = float(goal.get("monthly_contribution") or 0)
+            st.markdown(f"**{goal.get('name')}** · {goal.get('goal_type', 'Spaardoel')}")
+            st.progress(min(1.0, saved / target) if target > 0 else 0.0)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Doelbedrag", euro(target))
+            c2.metric("Gereserveerd", euro(saved))
+            c3.metric("Nog nodig", euro(remaining))
+            target_date_value = goal.get("target_date")
+            if target_date_value:
+                st.caption(f"Doeldatum: {target_date_value} · Maandelijkse inleg: {euro(monthly)}")
+            st.divider()
+    else:
+        st.info("Je hebt nog geen spaardoelen. Voeg hierboven bijvoorbeeld een auto, keuken of badkamer toe.")
+
+    st.subheader("Budgetvoorstellen op basis van historie")
+    st.caption("Voorstellen gebruiken de transacties die op dit moment in de applicatie beschikbaar zijn. Controleer de volledigheid van de historie voordat je een voorstel activeert.")
+    if not transaction_df.empty:
+        hist = transaction_df.copy()
+        hist = hist[(hist["flow"] == "Uitgave") & (~hist.get("is_transfer", pd.Series(False, index=hist.index)).fillna(False))]
+        if not hist.empty:
+            hist["expense_amount"] = hist["amount"].abs()
+            monthly_cat = hist.assign(month=hist["date"].dt.to_period("M")).groupby(["category", "month"])["expense_amount"].sum().reset_index()
+            proposal_rows = []
+            for category, group in monthly_cat.groupby("category"):
+                # Include zero-spend months within the observed period for a fair monthly average.
+                first_month = monthly_cat["month"].min()
+                last_month = monthly_cat["month"].max()
+                full_months = max(1, (last_month.year - first_month.year) * 12 + last_month.month - first_month.month + 1)
+                avg = float(group["expense_amount"].sum()) / full_months
+                proposal_rows.append({"Categorie": category, "Historisch gemiddeld p/m": round(avg, 2), "Voorgesteld budget p/m": round(avg, 2), "Maandbudget": round(avg * 12, 2)})
+            proposal_df = pd.DataFrame(proposal_rows).sort_values("Historisch gemiddeld p/m", ascending=False)
+            edited_proposals = st.data_editor(proposal_df, use_container_width=True, hide_index=True, disabled=["Categorie", "Historisch gemiddeld p/m", "Maandbudget"], key="budget_proposal_editor")
+            proposal_period = st.selectbox("Periode waarvoor je voorstellen wilt opslaan", ["Maand", "Kwartaal", "Jaar"], key="proposal_period")
+            if st.button("Voorstellen opslaan als conceptbudgetten", type="primary"):
+                today = date.today()
+                if proposal_period == "Maand":
+                    period_start = today.replace(day=1)
+                    period_end = (period_start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+                    period_type = "month"
+                    factor = 1
+                elif proposal_period == "Kwartaal":
+                    quarter_month = ((today.month - 1) // 3) * 3 + 1
+                    period_start = date(today.year, quarter_month, 1)
+                    next_start_month = quarter_month + 3
+                    next_start = date(today.year + (next_start_month - 1) // 12, (next_start_month - 1) % 12 + 1, 1)
+                    period_end = next_start - timedelta(days=1)
+                    period_type = "quarter"
+                    factor = 3
+                else:
+                    period_start = date(today.year, 1, 1)
+                    period_end = date(today.year, 12, 31)
+                    period_type = "year"
+                    factor = 12
+                saved_count = 0
+                for _, row in edited_proposals.iterrows():
+                    amount = float(row["Voorgesteld budget p/m"]) * factor
+                    result = save_budget_plan(user_id, {
+                        "category": str(row["Categorie"]),
+                        "period_type": period_type,
+                        "period_start": period_start.isoformat(),
+                        "period_end": period_end.isoformat(),
+                        "amount": amount,
+                        "status": "draft",
+                        "source": "historical_average",
+                    })
+                    if result is not None:
+                        saved_count += 1
+                st.success(f"{saved_count} conceptbudgetten opgeslagen. Deze vervangen je bestaande maandbudgetten niet automatisch.")
+                st.rerun()
+        else:
+            st.info("Geen uitgavetransacties beschikbaar om budgetvoorstellen te berekenen.")
+    else:
+        st.info("Importeer transacties om historische budgetvoorstellen te berekenen.")
+
+    existing_plans = load_budget_plans(user_id)
+    if existing_plans:
+        st.subheader("Opgeslagen periodebudgetten")
+        st.dataframe(pd.DataFrame([{
+            "Categorie": p.get("category"),
+            "Periode": f"{p.get('period_start')} t/m {p.get('period_end')}",
+            "Type": p.get("period_type"),
+            "Bedrag": float(p.get("amount") or 0),
+            "Status": p.get("status"),
+            "Bron": p.get("source"),
+        } for p in existing_plans]), use_container_width=True, hide_index=True)
+
 elif chapter == "⚙️ Instellingen":
 
     st.title(
@@ -4355,6 +4640,46 @@ elif chapter == "⚙️ Instellingen":
                         "-",
                     )
                 )
+
+    st.divider()
+
+    st.subheader("💶 Actuele saldi")
+    st.caption("Voer per rekening het saldo en de peildatum in. Dit wordt gebruikt voor het actuele vermogensoverzicht; het saldo wordt niet bij historische inkomsten opgeteld.")
+
+    for account in accounts:
+        with st.container(border=True):
+            st.markdown(f"**{account.get('name', 'Rekening')}**")
+            current_balance = account.get("current_balance")
+            with st.form(f"balance_{account['id']}"):
+                balance_value = st.number_input(
+                    "Huidig saldo (€)",
+                    value=float(current_balance or 0),
+                    step=50.0,
+                    format="%.2f",
+                    key=f"balance_value_{account['id']}",
+                )
+                balance_date_value = st.date_input(
+                    "Saldo per",
+                    value=pd.to_datetime(account.get("balance_as_of") or date.today()).date(),
+                    key=f"balance_date_{account['id']}",
+                )
+                purpose_value = st.text_input(
+                    "Bestemming / spaardoel (optioneel)",
+                    value=account.get("savings_purpose") or "",
+                    key=f"purpose_{account['id']}",
+                )
+                balance_saved = st.form_submit_button("Saldo opslaan")
+            if balance_saved:
+                try:
+                    supabase.table("accounts").update({
+                        "current_balance": float(balance_value),
+                        "balance_as_of": balance_date_value.isoformat(),
+                        "savings_purpose": purpose_value.strip() or None,
+                    }).eq("id", account["id"]).eq("user_id", user_id).execute()
+                    st.success("Saldo bijgewerkt.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Saldo kon niet worden opgeslagen. Voer eerst de SQL-migratie uit: {e}")
 
     st.divider()
 
