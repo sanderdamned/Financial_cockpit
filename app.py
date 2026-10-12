@@ -1411,11 +1411,7 @@ def categorize_import_transaction(
     merchant_rules,
     flow=None,
 ):
-
-    text = (
-        f"{description} "
-        f"{merchant}"
-    ).lower()
+    text = f"{description or ''} {merchant or ''}".lower()
 
     # Alleen regels toepassen die passen bij het type transactie.
     allowed_categories = (
@@ -1424,154 +1420,45 @@ def categorize_import_transaction(
         else CATEGORIES
     )
     for rule_merchant, category in (merchant_rules or {}).items():
-        if str(rule_merchant).lower() in text and category in allowed_categories:
+        rule_text = str(rule_merchant).strip().lower()
+        if rule_text and rule_text in text and category in allowed_categories:
             return category
 
+    if flow == "Inkomst":
+        income_keyword_rules = {
+            "Salaris": ["salaris", "salary", "loon", "payroll", "salarisbetaling", "wage"],
+            "Belasting": ["belastingdienst", "belastingteruggave", "zorgtoeslag", "huurtoeslag", "kinderopvangtoeslag", "kindgebonden budget", "tax refund", "tax return"],
+            "Rente": ["rente", "interest"],
+            "Overboeking spaargeld": ["spaarrekening", "spaargeld", "savings", "overboeking", "overgemaakt van", "eigen rekening", "interne overboeking", "transfer from"],
+            "Tikkies": ["tikkie", "tikkies"],
+            "Overige inkomsten": ["refund", "terugbetaling", "cashback", "vergoeding"],
+        }
+        for category, keywords in income_keyword_rules.items():
+            if any(keyword in text for keyword in keywords):
+                return category
+        return "Overige inkomsten"
+
     category_rules = {
-
-        "Boodschappen": [
-            "albert heijn",
-            "jumbo",
-            "plus",
-            "lidl",
-            "aldi",
-            "dirk",
-            "picnic",
-            "hoogvliet",
-            "vomar",
-            "spar",
-            "supermarkt",
-        ],
-
-        "Telecom": [
-            "ziggo",
-            "odido",
-            "t-mobile",
-            "tmobile",
-            "kpn",
-            "vodafone",
-            "tele2",
-            "simyo",
-        ],
-
-        "Vervoer": [
-            "shell",
-            "esso",
-            "bp",
-            "total",
-            "texaco",
-            "anwb",
-            "q-park",
-            "parkmobile",
-            "uber",
-            "bolt",
-            "ov-chipkaart",
-            "ns ",
-        ],
-
-        "Horeca": [
-            "restaurant",
-            "cafe",
-            "café",
-            "mcdonald",
-            "burger king",
-            "starbucks",
-            "thuisbezorgd",
-            "uber eats",
-            "deliveroo",
-        ],
-
-        "Entertainment": [
-            "netflix",
-            "spotify",
-            "disney",
-            "prime video",
-            "pathe",
-            "bioscoop",
-            "youtube",
-            "apple music",
-        ],
-
-        "Abonnementen": [
-            "subscription",
-            "membership",
-            "abonnement",
-        ],
-
-        "Wonen": [
-            "vattenfall",
-            "essent",
-            "eneco",
-            "huur",
-            "hypotheek",
-            "waternet",
-        ],
-
-        "Verzekeringen": [
-            "verzekering",
-            "achmea",
-            "interpolis",
-            "ohra",
-            "aegon",
-        ],
-
-        "Gezondheid": [
-            "apotheek",
-            "ziekenhuis",
-            "tandarts",
-            "dokter",
-            "huisarts",
-        ],
-
-        "Kleding": [
-            "zara",
-            "h&m",
-            "uniqlo",
-            "nike",
-            "adidas",
-        ],
-
-        "Persoonlijke verzorging": [
-            "kapper",
-            "barber",
-            "rituals",
-            "douglas",
-            "ici paris",
-        ],
-
-        "Kinderen": [
-            "school",
-            "kinderopvang",
-            "creche",
-            "crèche",
-            "kinderdagverblijf",
-        ],
-
-        "Vakantie": [
-            "booking.com",
-            "airbnb",
-            "hotel",
-            "camping",
-        ],
-
-        "Inkomen": [
-            "salaris",
-            "salary",
-            "loon",
-        ],
+        "Boodschappen": ["albert heijn", "jumbo", "plus", "lidl", "aldi", "dirk", "picnic", "hoogvliet", "vomar", "spar", "supermarkt"],
+        "Telecom": ["ziggo", "odido", "t-mobile", "tmobile", "kpn", "vodafone", "tele2", "simyo"],
+        "Vervoer": ["shell", "esso", "bp", "total", "texaco", "anwb", "q-park", "parkmobile", "uber", "bolt", "ov-chipkaart", "ns "],
+        "Horeca": ["restaurant", "cafe", "café", "mcdonald", "burger king", "starbucks", "thuisbezorgd", "uber eats", "deliveroo"],
+        "Entertainment": ["netflix", "spotify", "disney", "prime video", "pathe", "bioscoop", "youtube", "apple music"],
+        "Abonnementen": ["subscription", "membership", "abonnement"],
+        "Wonen": ["vattenfall", "essent", "eneco", "huur", "hypotheek", "waternet"],
+        "Verzekeringen": ["verzekering", "achmea", "interpolis", "ohra", "aegon"],
+        "Gezondheid": ["apotheek", "ziekenhuis", "tandarts", "dokter", "huisarts"],
+        "Kleding": ["zara", "h&m", "uniqlo", "nike", "adidas"],
+        "Persoonlijke verzorging": ["kapper", "barber", "rituals", "douglas", "ici paris"],
+        "Kinderen": ["school", "kinderopvang", "creche", "crèche", "kinderdagverblijf"],
+        "Vakantie": ["booking.com", "airbnb", "hotel", "camping"],
     }
 
     for category, keywords in category_rules.items():
-        if category not in allowed_categories:
-            continue
-
-        for keyword in keywords:
-
-            if keyword in text:
-                return category
+        if category in allowed_categories and any(keyword in text for keyword in keywords):
+            return category
 
     return "Overig"
-
 
 def create_import_transaction_hash(
     transaction_date,
