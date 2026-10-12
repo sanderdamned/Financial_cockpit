@@ -3148,7 +3148,7 @@ elif chapter == "💳 Transacties":
             )
 
             st.metric(
-                "Inkomsten excl. overboekingen",
+                "Bijschrijvingen",
                 euro(income),
             )
 
