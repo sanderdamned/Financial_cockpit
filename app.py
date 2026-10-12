@@ -696,7 +696,7 @@ def update_transactions_for_merchant(
             .table("transactions")
             .update({"category": category})
             .eq("user_id", user_id)
-            .eq("merchant", merchant)
+            .ilike("merchant", merchant)
         )
         if flow is not None:
             query = query.eq("flow", flow)
