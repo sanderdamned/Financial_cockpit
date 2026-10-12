@@ -3106,51 +3106,40 @@ elif chapter == "💳 Transacties":
             errors="coerce",
         )
 
-        col1, col2, col3 = (
-            st.columns(3)
+        transfer_mask = (
+            transaction_display.get("is_transfer", pd.Series(False, index=transaction_display.index))
+            .fillna(False).astype(bool)
         )
+        transfer_mask = transfer_mask | transaction_display.get(
+            "category", pd.Series("", index=transaction_display.index)
+        ).fillna("").astype(str).str.strip().str.lower().eq("overboeking spaargeld")
+        transfer_text = (
+            transaction_display.get("description", pd.Series("", index=transaction_display.index)).fillna("").astype(str)
+            + " "
+            + transaction_display.get("merchant", pd.Series("", index=transaction_display.index)).fillna("").astype(str)
+        )
+        transfer_mask = transfer_mask | transfer_text.str.contains(
+            r"overboeking|eigen rekening|spaarrekening|spaargeld|transfer from|overgemaakt van|interne overboeking",
+            case=False, regex=True, na=False,
+        )
+        transaction_display["Weergavetype"] = transaction_display["flow"].where(~transfer_mask, "Overboeking")
+        regular_transactions = transaction_display.loc[~transfer_mask].copy()
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
-
-            st.metric(
-                "Transacties",
-                len(transaction_display),
-            )
+            st.metric("Transacties", len(transaction_display))
 
         with col2:
-
-            expenses = (
-                transaction_display[
-                    transaction_display[
-                        "flow"
-                    ]
-                    == "Uitgave"
-                ]["amount"]
-                .abs()
-                .sum()
-            )
-
-            st.metric(
-                "Uitgaven",
-                euro(expenses),
-            )
+            expenses = regular_transactions.loc[regular_transactions["flow"] == "Uitgave", "amount"].abs().sum()
+            st.metric("Uitgaven", euro(expenses))
 
         with col3:
+            income = regular_transactions.loc[regular_transactions["flow"] == "Inkomst", "amount"].sum()
+            st.metric("Inkomsten", euro(income))
 
-            income = (
-                transaction_display[
-                    transaction_display[
-                        "flow"
-                    ]
-                    == "Inkomst"
-                ]["amount"]
-                .sum()
-            )
-
-            st.metric(
-                "Bijschrijvingen",
-                euro(income),
-            )
+        with col4:
+            transfer_amount = transaction_display.loc[transfer_mask, "amount"].abs().sum()
+            st.metric("Overboekingen spaargeld", euro(transfer_amount))
 
         st.subheader("💶 Inkomsten per bron")
         source_summary = income_source_summary(transaction_display)
@@ -3170,7 +3159,7 @@ elif chapter == "💳 Transacties":
             "description",
             "merchant",
             "amount",
-            "flow",
+            "Weergavetype",
             "category",
         ]
 
@@ -3333,21 +3322,31 @@ elif chapter == "🏷️ Categorieën":
     )
 
     col1, col2 = st.columns(
-        [3, 1.5]
+        [3, 1.8]
     )
 
     with col1:
-
         search = st.text_input(
             "🔎 Zoek winkel of organisatie",
             placeholder="Bijvoorbeeld Albert Heijn",
         )
 
     with col2:
-
-        only_rules = st.checkbox(
-            "Alleen mijn regels"
+        manage_categories = st.toggle(
+            "Bestaande categorieën aanpassen",
+            value=False,
+            key="manage_existing_categories",
+            help="Zet aan om eerder opgeslagen categoriekeuzes te wijzigen.",
         )
+
+    # Standaard alleen merchants zonder opgeslagen keuze tonen.
+    # In de beheerstand tonen we juist de merchants met een bestaande regel.
+    rule_merchants = set(merchant_category_rules.keys())
+    normalized_merchants = merchant_summary["merchant"].fillna("").astype(str).str.lower().str.strip()
+    if manage_categories:
+        merchant_summary = merchant_summary[normalized_merchants.isin(rule_merchants)].copy()
+    else:
+        merchant_summary = merchant_summary[~normalized_merchants.isin(rule_merchants)].copy()
 
     if search:
 
@@ -3366,24 +3365,21 @@ elif chapter == "🏷️ Categorieën":
             ]
         )
 
-    if only_rules:
-
-        merchant_summary = (
-            merchant_summary[
-                merchant_summary[
-                    "merchant"
-                ]
-                .astype(str)
-                .str.lower()
-                .isin(
-                    merchant_category_rules.keys()
-                )
-            ]
-        )
-
     st.subheader(
-        "🏪 Winkels & organisaties"
+        "🛠️ Bestaande categorieën aanpassen" if manage_categories else "☑️ Nog te categoriseren — winkels & organisaties"
     )
+
+    if not merchant_summary.empty:
+        st.caption(
+            "Na opslaan verdwijnt een merchant uit deze afvinklijst. "
+            "Zet ‘Bestaande categorieën aanpassen’ aan om opgeslagen keuzes later te wijzigen."
+        )
+    else:
+        st.success(
+            "Alle winkels en organisaties in deze lijst zijn gecategoriseerd."
+            if not manage_categories
+            else "Er zijn nog geen opgeslagen categorieën om aan te passen."
+        )
 
     for index, row in (
         merchant_summary
@@ -3560,6 +3556,17 @@ elif chapter == "🏷️ Categorieën":
             .reset_index()
             .sort_values("total", ascending=False)
         )
+        income_summary["_merchant_key"] = income_summary["merchant"].fillna("").astype(str).str.lower().str.strip()
+        if manage_categories:
+            income_summary = income_summary[income_summary["_merchant_key"].isin(rule_merchants)].copy()
+        else:
+            income_summary = income_summary[~income_summary["_merchant_key"].isin(rule_merchants)].copy()
+        if income_summary.empty:
+            st.success(
+                "Alle inkomstenbronnen zijn gecategoriseerd."
+                if not manage_categories
+                else "Er zijn nog geen opgeslagen inkomstencategorieën om aan te passen."
+            )
         for income_index, income_row in income_summary.reset_index(drop=True).iterrows():
             merchant_name = str(income_row["merchant"]).strip()
             merchant_key = merchant_name.lower()
