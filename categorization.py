@@ -326,25 +326,21 @@ def categorize_transaction(
         f"{description or ''} {merchant or ''}"
     )
 
-    # User rules always win
-    if merchant_rules:
-
-        for rule_merchant, category in merchant_rules.items():
-
-            rule_text = normalize_text(rule_merchant)
-
-            if rule_text and rule_text in text:
-                return category
-
-    # Only search appropriate category group
+    # Only search the category group appropriate to the transaction flow.
     if flow == "Inkomst":
         allowed_categories = INCOME_CATEGORIES
-
     elif flow == "Uitgave":
         allowed_categories = EXPENSE_CATEGORIES
-
     else:
         allowed_categories = CATEGORIES
+
+    # User rules win, but a category for income must never be assigned to an
+    # expense (or vice versa) just because the merchant name matches.
+    if merchant_rules:
+        for rule_merchant, category in merchant_rules.items():
+            rule_text = normalize_text(rule_merchant)
+            if rule_text and rule_text in text and category in allowed_categories:
+                return category
 
     for category in allowed_categories:
 
