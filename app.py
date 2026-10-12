@@ -3148,7 +3148,7 @@ elif chapter == "💳 Transacties":
             )
 
             st.metric(
-                "Inkomsten",
+                "Inkomsten excl. overboekingen",
                 euro(income),
             )
 
@@ -4578,7 +4578,20 @@ elif chapter == "📆 Jaaranalyse":
         summary_rows = []
         for year in all_years:
             year_df = annual_df[annual_df["date"].dt.year == year]
-            income = float(year_df.loc[year_df["flow"] == "Inkomst", "amount"].sum())
+            income_rows = year_df[year_df["flow"] == "Inkomst"].copy()
+            if "category" in income_rows.columns:
+                income_rows = income_rows[
+                    income_rows["category"].fillna("").astype(str).str.strip().str.lower() != "overboeking spaargeld"
+                ]
+            if not income_rows.empty:
+                income_desc = income_rows.get("description", pd.Series("", index=income_rows.index)).fillna("").astype(str)
+                income_merchant = income_rows.get("merchant", pd.Series("", index=income_rows.index)).fillna("").astype(str)
+                income_transfer_mask = (income_desc + " " + income_merchant).str.contains(
+                    r"overboeking|eigen rekening|spaarrekening|spaargeld|transfer from|overgemaakt van|interne overboeking",
+                    case=False, regex=True, na=False,
+                )
+                income_rows = income_rows[~income_transfer_mask]
+            income = float(income_rows["amount"].sum())
             expenses = float(year_df.loc[year_df["flow"] == "Uitgave", "amount"].abs().sum())
             summary_rows.append({
                 "Jaar": year,
