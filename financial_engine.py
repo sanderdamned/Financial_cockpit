@@ -1819,6 +1819,177 @@ def calculate_financial_health(
 
 
 # ============================================================
+# PROJECTED ACCOUNT BALANCE
+# ============================================================
+
+def calculate_recurring_transfer_net_in_period(
+    recurring_transactions,
+    period,
+    today=None,
+):
+    """Estimate future internal transfers for one account, with account-level signs."""
+    if not recurring_transactions:
+        return 0.0
+
+    if today is None:
+        today = pd.Timestamp.today().normalize()
+
+    selected_period = pd.Period(period, freq="M")
+    total = 0.0
+
+    for item in recurring_transactions:
+        if not item.get("active", True):
+            continue
+
+        if str(item.get("category", "")).strip().lower() != "overboeking spaargeld":
+            continue
+
+        flow = str(item.get("flow", "")).strip()
+        if flow not in ("Inkomst", "Uitgave"):
+            continue
+
+        amount = abs(float(item.get("expected_amount", 0) or 0))
+        for occurrence in get_recurring_occurrences(item, selected_period):
+            if selected_period < today.to_period("M"):
+                continue
+            if selected_period == today.to_period("M") and occurrence <= today:
+                continue
+
+            total += amount if flow == "Inkomst" else -amount
+
+    return float(total)
+
+
+def calculate_projected_account_balance(
+    current_balance,
+    balance_as_of,
+    df,
+    recurring_transactions=None,
+    period=None,
+    today=None,
+):
+    """
+    Project one account's balance through the end of the selected month.
+
+    The entered balance is reconciled with imported transactions after its
+    as-of date. Ordinary income/expenses use the household cashflow forecast;
+    scheduled savings transfers are then added separately because they change
+    an individual account balance but are not household income or expenses.
+    """
+    if current_balance is None or balance_as_of in (None, ""):
+        return {
+            "available": False,
+            "reason": "Vul eerst het actuele saldo en de peildatum in via Instellingen.",
+        }
+
+    if today is None:
+        today = pd.Timestamp.today().normalize()
+    else:
+        today = pd.Timestamp(today).normalize()
+
+    try:
+        selected_period = pd.Period(period, freq="M")
+        as_of = pd.Timestamp(balance_as_of).normalize()
+    except Exception:
+        return {
+            "available": False,
+            "reason": "Het saldo of de peildatum is niet geldig.",
+        }
+
+    if selected_period < today.to_period("M"):
+        return {
+            "available": False,
+            "reason": "Een eindsaldoprognose is alleen beschikbaar voor de huidige of een toekomstige maand.",
+        }
+
+    if as_of > today:
+        return {
+            "available": False,
+            "reason": "De peildatum ligt in de toekomst. Vul een actueel saldo met een datum van vandaag of eerder in.",
+        }
+
+    if df is None or df.empty or not {"date", "flow", "amount"}.issubset(df.columns):
+        return {
+            "available": False,
+            "reason": "Importeer transacties om het saldo sinds de peildatum en de prognose te kunnen berekenen.",
+        }
+
+    transactions = df.copy()
+    transactions["date"] = pd.to_datetime(transactions["date"], errors="coerce")
+    transactions["amount"] = pd.to_numeric(transactions["amount"], errors="coerce").fillna(0)
+    transactions = transactions.dropna(subset=["date"])
+
+    # An account balance includes transfers, unlike household income/expense totals.
+    transactions_after_as_of = transactions[
+        (transactions["date"].dt.normalize() > as_of)
+        & (transactions["date"].dt.normalize() <= today)
+    ].copy()
+
+    if not transactions_after_as_of.empty:
+        signed_amounts = transactions_after_as_of["amount"].abs()
+        signed_amounts = signed_amounts.where(
+            transactions_after_as_of["flow"] == "Inkomst",
+            -signed_amounts.where(
+                transactions_after_as_of["flow"] == "Uitgave",
+                0.0,
+            ),
+        )
+        balance_today = float(current_balance) + float(signed_amounts.sum())
+    else:
+        balance_today = float(current_balance)
+
+    projected_balance = balance_today
+    current_month = today.to_period("M")
+    recurring_transactions = recurring_transactions or []
+
+    for forecast_period in pd.period_range(
+        current_month,
+        selected_period,
+        freq="M",
+    ):
+        month_forecast = calculate_month_forecast(
+            transactions,
+            forecast_period,
+            recurring_transactions,
+        )
+
+        if forecast_period == current_month:
+            actual_net = (
+                float(month_forecast.get("actual_income", 0) or 0)
+                - float(month_forecast.get("actual_expenses", 0) or 0)
+            )
+            projected_external_change = (
+                float(month_forecast.get("projected_net", 0) or 0)
+                - actual_net
+            )
+        else:
+            projected_external_change = float(
+                month_forecast.get("projected_net", 0) or 0
+            )
+
+        transfer_change = calculate_recurring_transfer_net_in_period(
+            recurring_transactions,
+            forecast_period,
+            today=today,
+        )
+
+        projected_balance += projected_external_change + transfer_change
+
+    return {
+        "available": True,
+        "balance_today_estimate": float(balance_today),
+        "projected_balance": float(projected_balance),
+        "projected_change": float(projected_balance - balance_today),
+        "period": str(selected_period),
+        "note": (
+            "Schatting op basis van het ingevoerde saldo, geïmporteerde "
+            "transacties sinds de peildatum en de cashflowprognose. "
+            "Controleer of alle transacties zijn geïmporteerd."
+        ),
+    }
+
+
+# ============================================================
 # FORECAST QUALITY AND ACTIONABLE INSIGHTS
 # ============================================================
 
