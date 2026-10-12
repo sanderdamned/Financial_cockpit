@@ -36,6 +36,7 @@ from financial_engine import (
     calculate_monthly_recurring_income,
     calculate_forecast_data_quality,
     generate_financial_insights,
+    calculate_projected_account_balance,
 )
 
 
@@ -2395,6 +2396,14 @@ with st.sidebar:
         ]
     )
 
+    selected_account = next(
+        (
+            account for account in accounts
+            if str(account.get("id")) == str(selected_account_id)
+        ),
+        {},
+    )
+
     st.divider()
 
     if st.button(
@@ -2591,6 +2600,16 @@ if chapter == "📊 Overzicht":
         )
     )
 
+    account_balance_forecast = None
+    if selected_period >= current_period():
+        account_balance_forecast = calculate_projected_account_balance(
+            selected_account.get("current_balance"),
+            selected_account.get("balance_as_of"),
+            transaction_df,
+            active_recurring,
+            selected_period,
+        )
+
     # --------------------------------------------------------
     # TOP METRICS
     # --------------------------------------------------------
@@ -2676,6 +2695,32 @@ if chapter == "📊 Overzicht":
             "De inkomsten en uitgaven bovenaan zijn de werkelijk geïmporteerde transacties. "
             "De prognose hieronder schat het volledige maandresultaat."
         )
+
+    # --------------------------------------------------------
+    # PROJECTED ACCOUNT BALANCE
+    # --------------------------------------------------------
+    if selected_period >= current_period():
+        st.subheader("🏦 Verwacht eindsaldo rekening")
+
+        if account_balance_forecast and account_balance_forecast.get("available"):
+            balance_col1, balance_col2 = st.columns(2)
+            balance_col1.metric(
+                "Geschat saldo nu",
+                euro(account_balance_forecast["balance_today_estimate"]),
+            )
+            balance_col2.metric(
+                f"Verwacht eindsaldo {DUTCH_MONTHS[selected_period.month]}",
+                euro(account_balance_forecast["projected_balance"]),
+                delta=euro(account_balance_forecast["projected_change"]),
+            )
+            st.caption(account_balance_forecast["note"])
+        else:
+            reason = (
+                account_balance_forecast.get("reason")
+                if account_balance_forecast
+                else "Vul een actueel saldo en peildatum in via Instellingen."
+            )
+            st.info(reason)
 
     # --------------------------------------------------------
     # CASHFLOW TREND
