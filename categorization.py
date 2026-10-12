@@ -55,13 +55,22 @@ CATEGORY_RULES = {
         "salary",
         "loon",
         "payroll",
+        "salarisbetaling",
+        "wage",
     ],
 
     "Belasting": [
         "belastingdienst",
+        "belasting terug",
+        "belastingteruggave",
         "toeslag",
+        "zorgtoeslag",
+        "huurtoeslag",
+        "kinderopvangtoeslag",
+        "kindgebonden budget",
         "teruggave",
         "tax refund",
+        "tax return",
     ],
 
     "Rente": [
@@ -73,6 +82,11 @@ CATEGORY_RULES = {
         "spaarrekening",
         "spaargeld",
         "savings",
+        "overboeking",
+        "overgemaakt van",
+        "eigen rekening",
+        "interne overboeking",
+        "transfer from",
     ],
 
     "Tikkies": [
