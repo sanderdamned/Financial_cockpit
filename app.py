@@ -4166,6 +4166,13 @@ elif chapter == "🎯 Budgetten":
         this_month = pd.Timestamp(date.today().replace(day=1))
         history_start = this_month - pd.DateOffset(months=36)
         history = history[(history["date"] >= history_start) & (history["date"] < this_month)]
+        history_months_covered = 36
+        if not history.empty:
+            first_history_month = history["date"].min().to_period("M")
+            history_months_covered = max(
+                1,
+                min(36, (this_month.to_period("M") - first_history_month).n),
+            )
 
         if "category" not in history.columns:
             history["category"] = "Overig"
@@ -4237,8 +4244,9 @@ elif chapter == "🎯 Budgetten":
                     if spending_month_count <= 3:
                         budget_type = "annual"
                         period_months = 12
-                        planned_amount = category_total / 3.0
-                        type_reason = "Schatting van jaarlijkse uitgaven op basis van maximaal 36 maanden historie"
+                        observed_years = max(1.0, history_months_covered / 12.0)
+                        planned_amount = category_total / observed_years
+                        type_reason = "Schatting van jaarlijkse uitgaven op basis van de beschikbare historie (maximaal 36 maanden)"
                     elif spending_month_count <= 9:
                         budget_type = "periodic"
                         period_months = min(12, max(2, round(36 / spending_month_count)))
@@ -4261,9 +4269,10 @@ elif chapter == "🎯 Budgetten":
 
     st.subheader("💡 Budgetvoorstellen op basis van je uitgaven")
     st.caption(
-        "De voorstellen gebruiken de laatste 12 volledige maanden. Periodieke en jaarlijkse "
-        "frequenties worden overgenomen uit je opgeslagen terugkerende betalingen als die beschikbaar zijn. "
-        "Controleer de voorstellen voordat je ze opslaat."
+        "Maandgemiddelden gebruiken de laatste 12 volledige maanden; om jaarlijkse en onregelmatige "
+        "uitgaven te herkennen kijken we tot 36 maanden terug. Periodieke frequenties worden overgenomen "
+        "uit opgeslagen terugkerende betalingen als die beschikbaar zijn. Voorstellen zijn schattingen: "
+        "controleer en wijzig ze voordat je ze opslaat."
     )
 
     if suggestions:
