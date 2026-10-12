@@ -3587,6 +3587,72 @@ elif chapter == "🏷️ Categorieën":
         & ~category_transfer_mask
     ].copy()
 
+    # Offer a safe, explicit one-time update for existing fallback-category
+    # transactions. Saved merchant rules and recognizable categories keep priority.
+    small_expense_candidates = []
+    for transaction in all_transactions:
+        if transaction.get("flow") != "Uitgave":
+            continue
+        if transaction.get("category") != "Overig":
+            continue
+
+        try:
+            amount = abs(float(transaction.get("amount", 0) or 0))
+        except (TypeError, ValueError):
+            continue
+
+        if amount >= 15 or not transaction.get("id"):
+            continue
+
+        suggested_category = categorize_import_transaction(
+            transaction.get("description", ""),
+            transaction.get("merchant", ""),
+            merchant_category_rules,
+            flow="Uitgave",
+            amount=transaction.get("amount"),
+        )
+        if suggested_category == "Kleine uitgaven":
+            small_expense_candidates.append(transaction)
+
+    if small_expense_candidates:
+        st.info(
+            f"{len(small_expense_candidates)} bestaande uitgave(n) onder €15 "
+            "staan nog op ‘Overig’ en passen bij de nieuwe regel."
+        )
+        if st.button(
+            "Categoriseer deze bestaande uitgaven als Kleine uitgaven",
+            key="apply_small_expense_rule_existing",
+            type="secondary",
+        ):
+            updated_count = 0
+            try:
+                candidate_ids = [
+                    transaction["id"]
+                    for transaction in small_expense_candidates
+                ]
+                for start in range(0, len(candidate_ids), 100):
+                    batch_ids = candidate_ids[start:start + 100]
+                    result = (
+                        supabase
+                        .table("transactions")
+                        .update({"category": "Kleine uitgaven"})
+                        .eq("user_id", user_id)
+                        .in_("id", batch_ids)
+                        .execute()
+                    )
+                    updated_count += len(result.data or [])
+
+                st.success(
+                    f"{updated_count} bestaande uitgave(n) bijgewerkt. "
+                    "Andere categorieën en opgeslagen categorieregels zijn behouden."
+                )
+                st.rerun()
+            except Exception as e:
+                st.error(
+                    "Niet alle bestaande uitgaven konden worden bijgewerkt. "
+                    f"Controleer de databaseverbinding. Details: {e}"
+                )
+
     if expenses.empty:
         st.info("Geen uitgaven gevonden. Je kunt hieronder wel inkomsten categoriseren.")
 
