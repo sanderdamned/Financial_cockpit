@@ -2460,7 +2460,7 @@ if chapter == "📊 Overzicht":
             <div class="fc-hero-copy">
                 Je geld, je gewoontes en je vooruitzicht — overzichtelijk op één plek.
             </div>
-            <div class="fc-hero-meta">📅 {today().strftime('%A %d %B %Y')}</div>
+            <div class="fc-hero-meta">📅 {["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"][today().weekday()]} {today().day} {DUTCH_MONTHS[today().month]} {today().year}</div>
         </div>
         """,
         unsafe_allow_html=True,
