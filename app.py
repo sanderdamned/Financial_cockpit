@@ -3343,7 +3343,7 @@ elif chapter == "🏷️ Categorieën":
                         key=f"bulk_expense_category_{index}_{merchant}",
                         label_visibility="collapsed",
                     )
-                pending_category_rules.append((merchant, selected_category, "Uitgave"))
+                pending_category_rules.append((merchant, current_category, selected_category, "Uitgave"))
 
         st.divider()
         st.markdown("### Inkomsten categoriseren")
@@ -3372,7 +3372,7 @@ elif chapter == "🏷️ Categorieën":
                         key=f"bulk_income_category_{income_index}_{merchant_key}",
                         label_visibility="collapsed",
                     )
-                pending_category_rules.append((merchant_key, new_income_category, "Inkomst"))
+                pending_category_rules.append((merchant_key, current_income_category, new_income_category, "Inkomst"))
 
         submitted_all_categories = st.form_submit_button(
             "💾 Alles opslaan en toepassen",
@@ -3383,11 +3383,30 @@ elif chapter == "🏷️ Categorieën":
     if submitted_all_categories:
         successful = 0
         failed = []
-        for merchant, category, flow in pending_category_rules:
+        unchanged = 0
+        changed_rules = [
+            (merchant, old_category, new_category, flow)
+            for merchant, old_category, new_category, flow in pending_category_rules
+            if new_category != old_category
+        ]
+
+        allowed_by_flow = {
+            "Uitgave": set(EXPENSE_CATEGORIES),
+            "Inkomst": set(INCOME_CATEGORIES),
+        }
+
+        for merchant, old_category, category, flow in changed_rules:
+            # Valideer vóór het opslaan: alleen gewijzigde categorieën en
+            # uitsluitend categorieën die bij het transactie-type horen.
+            if flow not in allowed_by_flow or category not in allowed_by_flow[flow]:
+                failed.append(merchant)
+                continue
+
             saved = save_merchant_category_rule(user_id, merchant, category)
             if saved is None:
                 failed.append(merchant)
                 continue
+
             updated = update_transactions_for_merchant(
                 user_id, merchant, category, flow=flow
             )
@@ -3396,16 +3415,25 @@ elif chapter == "🏷️ Categorieën":
                 continue
             successful += 1
 
+        unchanged = len(pending_category_rules) - len(changed_rules)
+
         if failed:
             st.error(
-                f"{successful} regels opgeslagen. Niet alles kon worden bijgewerkt voor: "
+                f"{successful} gewijzigde categorieën opgeslagen en toegepast. "
+                f"{unchanged} ongewijzigd gelaten. Niet gelukt voor: "
                 + ", ".join(sorted(set(failed)))
                 + ". Controleer de foutmeldingen en probeer opnieuw."
             )
+        elif successful == 0:
+            st.info(
+                "Er zijn geen categorieën gewijzigd. Er is niets opgeslagen; "
+                "ongewijzigde keuzes worden niet als vaste regel vastgelegd."
+            )
         else:
             st.success(
-                f"✅ {successful} categorisatieregels opgeslagen en toegepast. "
-                "Ze worden onthouden voor toekomstige transacties en verdwijnen uit de openstaande lijst."
+                f"✅ {successful} gewijzigde categorieën opgeslagen en toegepast. "
+                f"{unchanged} ongewijzigd gelaten. Alleen gewijzigde keuzes worden "
+                "als vaste regel onthouden voor toekomstige transacties."
             )
             st.rerun()
 
