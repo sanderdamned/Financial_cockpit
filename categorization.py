@@ -31,6 +31,8 @@ EXPENSE_CATEGORIES = [
     "Kinderen",
     "Vakantie",
     "Kleding",
+    "Grote projecten",
+    "Kleine uitgaven",
     "Persoonlijke verzorging",
     "Belastingen",
     "Overboekingen",
@@ -312,6 +314,7 @@ def categorize_transaction(
     merchant: Optional[str] = None,
     merchant_rules: Optional[dict] = None,
     flow: Optional[str] = None,
+    amount=None,
 ) -> str:
     """
     Categorizes a transaction.
@@ -351,6 +354,13 @@ def categorize_transaction(
 
     if flow == "Inkomst":
         return "Overige inkomsten"
+
+    # Alleen als geen specifieke uitgavencategorie past, gebruik Kleine uitgaven.
+    try:
+        if flow == "Uitgave" and amount is not None and abs(float(amount)) < 25:
+            return "Kleine uitgaven"
+    except (TypeError, ValueError):
+        pass
 
     return "Overig"
 
@@ -619,11 +629,13 @@ def prepare_import_dataframe(
             merchant=merchant,
             merchant_rules=merchant_rules,
             flow=flow,
+            amount=amount,
         )
-        for description, merchant, flow in zip(
+        for description, merchant, flow, amount in zip(
             df["description"],
             df["merchant"],
             df["flow"],
+            df["amount"],
         )
     ]
 
