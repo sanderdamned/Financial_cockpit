@@ -2673,9 +2673,61 @@ if chapter == "📊 Overzicht":
     elif is_current:
 
         st.caption(
-            "Dit zijn de werkelijke transacties "
-            "die tot vandaag zijn geïmporteerd."
+            "De inkomsten en uitgaven bovenaan zijn de werkelijk geïmporteerde transacties. "
+            "De prognose hieronder schat het volledige maandresultaat."
         )
+
+    # --------------------------------------------------------
+    # CASHFLOW TREND
+    # --------------------------------------------------------
+    st.subheader("📈 Cashflowtrend")
+
+    if selected_period < current_period():
+        trend_end = selected_period
+    else:
+        trend_end = current_period() - 1
+
+    trend_periods = [
+        trend_end - offset
+        for offset in reversed(range(6))
+    ]
+
+    trend_rows = []
+    trend_clean = without_transfers(transaction_df)
+
+    for trend_period in trend_periods:
+        month_metrics = calculate_monthly_metrics(
+            trend_clean,
+            trend_period,
+            exclude_internal_transfers=True,
+        )
+        trend_rows.append({
+            "Maand": f"{DUTCH_MONTHS[trend_period.month][:3]} {trend_period.year}",
+            "Inkomsten": month_metrics["income"],
+            "Uitgaven": month_metrics["expenses"],
+            "Netto": month_metrics["net"],
+        })
+
+    if selected_period >= current_period():
+        trend_rows.append({
+            "Maand": f"Prognose {DUTCH_MONTHS[selected_period.month][:3]} {selected_period.year}",
+            "Inkomsten": projected_income,
+            "Uitgaven": projected_expenses,
+            "Netto": projected_net,
+        })
+
+    trend_chart = pd.DataFrame(trend_rows)
+    if not trend_chart.empty:
+        st.line_chart(
+            trend_chart.set_index("Maand"),
+            use_container_width=True,
+        )
+        st.caption(
+            "Historische maanden tonen werkelijke transacties; de laatste regel is een prognose. "
+            "Dit is cashflow, geen banksaldo."
+        )
+    else:
+        st.info("Er is nog onvoldoende transactiehistorie voor een cashflowtrend.")
 
     st.divider()
 
@@ -2910,7 +2962,6 @@ if chapter == "📊 Overzicht":
         desired_buffer = st.number_input(
             "Bedrag dat je deze maand wilt overhouden",
             min_value=0.0,
-            value=float(st.session_state.get("overview_desired_buffer", 0.0)),
             step=250.0,
             help="Dit bedrag wordt afgetrokken van het verwachte maandoverschot. Dit is geen banksaldo of gegarandeerd besteedbaar bedrag.",
             key="overview_desired_buffer",
