@@ -1102,65 +1102,70 @@ def calculate_historical_monthly_average(
     df,
     months=6
 ):
+    """
+    Calculate a baseline from completed months only.
 
-    if df.empty:
-        return {
-            "income": 0.0,
-            "expenses": 0.0,
-        }
+    The current month is intentionally excluded: its transactions are
+    incomplete and using them in a monthly average can materially
+    understate normal spending or income.
+    """
+    empty_result = {
+        "income": 0.0,
+        "expenses": 0.0,
+    }
 
-    clean_df = exclude_transfers(df)
+    if df is None or df.empty:
+        return empty_result
 
-    clean_df = clean_df.copy()
+    clean_df = exclude_transfers(df).copy()
 
-    clean_df["month"] = (
-        clean_df["date"]
-        .dt.to_period("M")
+    if "date" not in clean_df.columns or "flow" not in clean_df.columns:
+        return empty_result
+
+    clean_df["date"] = pd.to_datetime(
+        clean_df["date"],
+        errors="coerce",
     )
+    clean_df["amount"] = pd.to_numeric(
+        clean_df["amount"],
+        errors="coerce",
+    ).fillna(0)
+    clean_df = clean_df.dropna(subset=["date"])
 
+    if clean_df.empty:
+        return empty_result
+
+    clean_df["month"] = clean_df["date"].dt.to_period("M")
     latest_month = clean_df["month"].max()
+    current_month = pd.Timestamp.today().to_period("M")
 
-    if pd.isna(latest_month):
-        return {
-            "income": 0.0,
-            "expenses": 0.0,
-        }
+    # Never use an incomplete current month as the baseline month.
+    if latest_month >= current_month:
+        latest_month = current_month - 1
 
-    start_month = (
-        latest_month - (months - 1)
-    )
-
+    start_month = latest_month - (max(1, int(months)) - 1)
     clean_df = clean_df[
-        clean_df["month"] >= start_month
+        (clean_df["month"] >= start_month)
+        & (clean_df["month"] <= latest_month)
     ]
 
+    if clean_df.empty:
+        return empty_result
+
     monthly_income = (
-        clean_df[
-            clean_df["flow"] == "Inkomst"
-        ]
+        clean_df[clean_df["flow"] == "Inkomst"]
         .groupby("month")["amount"]
         .sum()
     )
-
     monthly_expenses = (
-        clean_df[
-            clean_df["flow"] == "Uitgave"
-        ]
+        clean_df[clean_df["flow"] == "Uitgave"]
         .groupby("month")["amount"]
-        .apply(lambda x: x.abs().sum())
+        .apply(lambda values: values.abs().sum())
     )
 
     return {
-        "income": float(
-            monthly_income.mean()
-            if not monthly_income.empty
-            else 0
-        ),
-        "expenses": float(
-            monthly_expenses.mean()
-            if not monthly_expenses.empty
-            else 0
-        ),
+        "income": float(monthly_income.mean()) if not monthly_income.empty else 0.0,
+        "expenses": float(monthly_expenses.mean()) if not monthly_expenses.empty else 0.0,
     }
 
 
@@ -1228,13 +1233,20 @@ def calculate_variable_expense_average(
     if pd.isna(latest_month):
         return 0.0
 
-    start_month = (
-        latest_month - (months - 1)
-    )
+    # Exclude an incomplete current month from the spending baseline.
+    current_month = pd.Timestamp.today().to_period("M")
+    if latest_month >= current_month:
+        latest_month = current_month - 1
+
+    start_month = latest_month - (max(1, int(months)) - 1)
 
     clean_df = clean_df[
-        clean_df["month"] >= start_month
+        (clean_df["month"] >= start_month)
+        & (clean_df["month"] <= latest_month)
     ]
+
+    if clean_df.empty:
+        return 0.0
 
     monthly = (
         clean_df
