@@ -831,6 +831,9 @@ def calculate_monthly_recurring_cost(
         if item.get("flow", "Uitgave") != "Uitgave":
             continue
 
+        if str(item.get("category", "")).strip().lower() == "overboeking spaargeld":
+            continue
+
         # Lage betrouwbaarheid niet meenemen
         if item.get("reliability") == "Laag":
             continue
@@ -865,6 +868,9 @@ def calculate_yearly_recurring_cost(
             continue
 
         if item.get("flow", "Uitgave") != "Uitgave":
+            continue
+
+        if str(item.get("category", "")).strip().lower() == "overboeking spaargeld":
             continue
 
         if item.get("reliability") == "Laag":
@@ -1014,6 +1020,9 @@ def calculate_recurring_remaining(
         if item.get("flow", "Uitgave") != "Uitgave":
             continue
 
+        if str(item.get("category", "")).strip().lower() == "overboeking spaargeld":
+            continue
+
         amount = float(
             item.get("expected_amount", 0) or 0
         )
@@ -1067,6 +1076,9 @@ def calculate_recurring_income_remaining(
             continue
 
         if item.get("flow") != "Inkomst":
+            continue
+
+        if str(item.get("category", "")).strip().lower() == "overboeking spaargeld":
             continue
 
         amount = float(
@@ -1636,6 +1648,9 @@ def calculate_recurring_cost_in_period(
             continue
 
         if item.get("flow", "Uitgave") != "Uitgave":
+            continue
+
+        if str(item.get("category", "")).strip().lower() == "overboeking spaargeld":
             continue
 
         amount = float(
