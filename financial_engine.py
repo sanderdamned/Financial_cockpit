@@ -1908,9 +1908,8 @@ def generate_financial_insights(
                 "level": "error",
                 "title": f"Budget overschreden: {category}",
                 "message": (
-                    f"Je zit €{abs(remaining):,.2f} boven het ingestelde "
-                    "budget.".replace(",", "X").replace(".", ",").replace("X", ".")
-                ),
+                    f"Je zit €{abs(remaining):,.2f} boven het ingestelde budget."
+                ).replace(",", "X").replace(".", ",").replace("X", "."),
             })
         elif percentage >= 80:
             insights.append({
