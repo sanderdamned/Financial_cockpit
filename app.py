@@ -4597,6 +4597,11 @@ elif chapter == "📆 Jaaranalyse":
         annual_df = transaction_df.copy()
         annual_df["date"] = pd.to_datetime(annual_df["date"], errors="coerce")
         annual_df = annual_df[annual_df["date"].notna()]
+        # Keep the full set for separate transfer reporting, but exclude internal
+        # transfers from all normal income/expense/net figures and category tables.
+        annual_transfer_mask = is_transfer_series(annual_df)
+        transfer_annual_df = annual_df.loc[annual_transfer_mask].copy()
+        clean_annual_df = annual_df.loc[~annual_transfer_mask].copy()
         current_year = date.today().year
         full_years = [current_year - 3, current_year - 2, current_year - 1]
         all_years = full_years + [current_year]
@@ -4606,26 +4611,10 @@ elif chapter == "📆 Jaaranalyse":
             st.warning("Voor deze volledige kalenderjaren zijn geen transacties gevonden: " + ", ".join(map(str, missing_years)) + ". Controleer of alle bankbestanden zijn geïmporteerd.")
         summary_rows = []
         for year in all_years:
-            year_df = annual_df[annual_df["date"].dt.year == year]
+            year_df = clean_annual_df[clean_annual_df["date"].dt.year == year]
             income_rows = year_df[year_df["flow"] == "Inkomst"].copy()
-            if "is_transfer" in income_rows.columns:
-                income_rows = income_rows[~income_rows["is_transfer"].fillna(False)]
-            if "category" in income_rows.columns:
-                income_rows = income_rows[
-                    income_rows["category"].fillna("").astype(str).str.strip().str.lower() != "overboeking spaargeld"
-                ]
-            if not income_rows.empty:
-                income_desc = income_rows.get("description", pd.Series("", index=income_rows.index)).fillna("").astype(str)
-                income_merchant = income_rows.get("merchant", pd.Series("", index=income_rows.index)).fillna("").astype(str)
-                income_transfer_mask = (income_desc + " " + income_merchant).str.contains(
-                    r"overboeking|eigen rekening|spaarrekening|spaargeld|transfer from|overgemaakt van|interne overboeking",
-                    case=False, regex=True, na=False,
-                )
-                income_rows = income_rows[~income_transfer_mask]
             income = float(income_rows["amount"].sum())
             expense_rows = year_df[year_df["flow"] == "Uitgave"].copy()
-            if "is_transfer" in expense_rows.columns:
-                expense_rows = expense_rows[~expense_rows["is_transfer"].fillna(False)]
             expenses = float(expense_rows["amount"].abs().sum())
             summary_rows.append({
                 "Jaar": year,
@@ -4644,7 +4633,7 @@ elif chapter == "📆 Jaaranalyse":
         )
 
         st.subheader("💶 Jaarlijkse inkomsten per bron")
-        income_df = annual_df[annual_df["flow"] == "Inkomst"].copy()
+        income_df = clean_annual_df[clean_annual_df["flow"] == "Inkomst"].copy()
         if not income_df.empty:
             income_df["Bedrag"] = pd.to_numeric(income_df["amount"], errors="coerce").abs()
             income_df["Bron"] = income_df.get("category", pd.Series("Overige inkomsten", index=income_df.index)).fillna("Overige inkomsten")
@@ -4668,7 +4657,7 @@ elif chapter == "📆 Jaaranalyse":
             st.info("Geen inkomsten gevonden voor deze periode.")
 
         st.subheader("Uitgaven per categorie")
-        expense_df = annual_df[annual_df["flow"] == "Uitgave"].copy()
+        expense_df = clean_annual_df[clean_annual_df["flow"] == "Uitgave"].copy()
         if not expense_df.empty:
             expense_df["Bedrag"] = expense_df["amount"].abs()
             category_year = expense_df[expense_df["date"].dt.year.isin(all_years)].pivot_table(
@@ -4678,6 +4667,25 @@ elif chapter == "📆 Jaaranalyse":
             st.dataframe(category_year.style.format("€ {:,.2f}"), use_container_width=True)
         else:
             st.info("Geen uitgaven gevonden voor de geselecteerde periode.")
+
+        st.subheader("🔁 Jaarlijkse overboekingen spaargeld")
+        if not transfer_annual_df.empty:
+            transfer_annual_df = transfer_annual_df[transfer_annual_df["date"].dt.year.isin(all_years)].copy()
+            transfer_annual_df["Bedrag"] = pd.to_numeric(transfer_annual_df["amount"], errors="coerce").abs()
+            transfer_annual_df["Jaar"] = transfer_annual_df["date"].dt.year
+            transfer_annual_df["Type"] = transfer_annual_df["flow"].map({
+                "Inkomst": "Ontvangen",
+                "Uitgave": "Verstuurd",
+            }).fillna("Overboeking")
+            transfer_summary = transfer_annual_df.pivot_table(
+                index="Type", columns="Jaar", values="Bedrag", aggfunc="sum", fill_value=0
+            )
+            transfer_summary.columns = [str(year) for year in transfer_summary.columns]
+            st.dataframe(transfer_summary.style.format("€ {:,.2f}"), use_container_width=True)
+            transfer_details = transfer_annual_df.groupby(["Jaar", "Type"], dropna=False)["Bedrag"].sum().reset_index()
+            st.caption("Deze bedragen worden apart getoond en tellen niet mee als inkomsten, uitgaven of nettoresultaat.")
+        else:
+            st.info("Geen overboekingen spaargeld herkend voor deze periode.")
 
         st.caption("Deze analyse gebruikt alle transacties die de app uit Supabase kan ophalen voor de geselecteerde rekeningweergave. Een ontbrekend jaar kan ook betekenen dat historische banktransacties nog niet zijn geïmporteerd.")
 
