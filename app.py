@@ -1409,6 +1409,7 @@ def categorize_import_transaction(
     description,
     merchant,
     merchant_rules,
+    flow=None,
 ):
 
     text = (
@@ -1416,15 +1417,14 @@ def categorize_import_transaction(
         f"{merchant}"
     ).lower()
 
-    # Eigen regels eerst
-    for rule_merchant, category in (
-        merchant_rules or {}
-    ).items():
-
-        if (
-            str(rule_merchant).lower()
-            in text
-        ):
+    # Alleen regels toepassen die passen bij het type transactie.
+    allowed_categories = (
+        INCOME_CATEGORIES if flow == "Inkomst"
+        else EXPENSE_CATEGORIES if flow == "Uitgave"
+        else CATEGORIES
+    )
+    for rule_merchant, category in (merchant_rules or {}).items():
+        if str(rule_merchant).lower() in text and category in allowed_categories:
             return category
 
     category_rules = {
@@ -1561,9 +1561,9 @@ def categorize_import_transaction(
         ],
     }
 
-    for category, keywords in (
-        category_rules.items()
-    ):
+    for category, keywords in category_rules.items():
+        if category not in allowed_categories:
+            continue
 
         for keyword in keywords:
 
@@ -1749,6 +1749,7 @@ def prepare_ing_csv(
                 row[description_column],
                 row["merchant"],
                 merchant_category_rules,
+                flow=row["flow"],
             ),
         axis=1,
     )
@@ -3404,171 +3405,8 @@ elif chapter == "🏷️ Categorieën":
             else "Er zijn nog geen opgeslagen categorieën om aan te passen."
         )
 
-    for index, row in (
-        merchant_summary
-        .reset_index(drop=True)
-        .iterrows()
-    ):
-
-        merchant = (
-            str(row["merchant"])
-            .strip()
-            .lower()
-        )
-
-        current_category = str(
-            row[
-                "current_category"
-            ]
-        )
-
-        total = abs(
-            float(
-                row["total"]
-            )
-        )
-
-        count = int(
-            row["transactions"]
-        )
-
-        rule_exists = (
-            merchant
-            in merchant_category_rules
-        )
-
-        with st.container(
-            border=True
-        ):
-
-            col1, col2, col3, col4 = (
-                st.columns(
-                    [
-                        3,
-                        1.5,
-                        2,
-                        1.8,
-                    ]
-                )
-            )
-
-            with col1:
-
-                st.markdown(
-                    f"**{merchant.title()}**"
-                )
-
-                rule_label = (
-                    " · vaste regel"
-                    if rule_exists
-                    else ""
-                )
-
-                st.caption(
-                    f"{count} transacties · "
-                    f"{euro(total)}"
-                    f"{rule_label}"
-                )
-
-            with col2:
-
-                st.caption(
-                    "Huidige categorie"
-                )
-
-                st.write(
-                    current_category
-                )
-
-            with col3:
-
-                category_options = [
-                    category
-                    for category
-                    in CATEGORIES
-                    if category
-                    != "Inkomen"
-                ]
-
-                new_category = (
-                    st.selectbox(
-                        "Nieuwe categorie",
-                        category_options,
-                        index=(
-                            category_options.index(
-                                current_category
-                            )
-                            if current_category
-                            in category_options
-                            else category_options.index(
-                                "Overig"
-                            )
-                        ),
-                        key=(
-                            f"category_"
-                            f"{index}_"
-                            f"{merchant}"
-                        ),
-                        label_visibility=(
-                            "collapsed"
-                        ),
-                    )
-                )
-
-            with col4:
-
-                if st.button(
-                    "💾 Toepassen",
-                    key=(
-                        f"save_category_"
-                        f"{index}_"
-                        f"{merchant}"
-                    ),
-                    use_container_width=True,
-                    type="primary",
-                ):
-
-                    saved = (
-                        save_merchant_category_rule(
-                            user_id,
-                            merchant,
-                            new_category,
-                        )
-                    )
-
-                    if saved is not None:
-
-                        updated = (
-                            update_transactions_for_merchant(
-                                user_id,
-                                merchant,
-                                new_category,
-                            )
-                        )
-
-                        if updated is not None:
-
-                            st.success(
-                                f"✅ "
-                                f"{merchant.title()} "
-                                f"→ {new_category}."
-                            )
-
-                            st.rerun()
-
-    # --------------------------------------------------------
-    # INCOME CATEGORIZATION
-    # --------------------------------------------------------
-    st.divider()
-    st.subheader("💶 Inkomsten categoriseren")
-    st.caption(
-        "Gebruik deze regels om bijschrijvingen te onderscheiden in salaris, belasting/toeslagen, "
-        "rente, overboekingen, Tikkies en overige inkomsten."
-    )
     income_df = df[df["flow"] == "Inkomst"].copy()
-    if income_df.empty:
-        st.info("Geen inkomsten gevonden.")
-    else:
+    if not income_df.empty:
         income_df["amount"] = pd.to_numeric(income_df["amount"], errors="coerce").fillna(0)
         if "merchant" not in income_df.columns:
             income_df["merchant"] = "Onbekend"
@@ -3584,12 +3422,46 @@ elif chapter == "🏷️ Categorieën":
             income_summary = income_summary[income_summary["_merchant_key"].isin(rule_merchants)].copy()
         else:
             income_summary = income_summary[~income_summary["_merchant_key"].isin(rule_merchants)].copy()
-        if income_summary.empty:
-            st.success(
-                "Alle inkomstenbronnen zijn gecategoriseerd."
-                if not manage_categories
-                else "Er zijn nog geen opgeslagen inkomstencategorieën om aan te passen."
-            )
+    else:
+        income_summary = pd.DataFrame(columns=["merchant", "transactions", "total", "_merchant_key"])
+
+    # Eén formulier voor alle categorieën: wijzigingen worden pas opgeslagen
+    # wanneer de gebruiker onderaan één keer op 'Alles opslaan' klikt.
+    pending_category_rules = []
+
+    with st.form("bulk_category_rules_form"):
+        st.markdown("### Uitgaven categoriseren")
+        if merchant_summary.empty:
+            st.caption("Geen openstaande uitgaven om te categoriseren.")
+        for index, row in merchant_summary.reset_index(drop=True).iterrows():
+            merchant = str(row["merchant"]).strip().lower()
+            current_category = str(row["current_category"])
+            total = abs(float(row["total"]))
+            count = int(row["transactions"])
+            rule_exists = merchant in merchant_category_rules
+            with st.container(border=True):
+                col1, col2, col3 = st.columns([3, 1.5, 2])
+                with col1:
+                    st.markdown(f"**{merchant.title()}**")
+                    st.caption(f"{count} transacties · {euro(total)}" + (" · vaste regel" if rule_exists else ""))
+                with col2:
+                    st.caption("Huidige categorie")
+                    st.write(current_category)
+                with col3:
+                    category_options = [category for category in EXPENSE_CATEGORIES]
+                    selected_category = st.selectbox(
+                        "Categorie",
+                        category_options,
+                        index=category_options.index(current_category) if current_category in category_options else category_options.index("Overig"),
+                        key=f"bulk_expense_category_{index}_{merchant}",
+                        label_visibility="collapsed",
+                    )
+                pending_category_rules.append((merchant, selected_category, "Uitgave"))
+
+        st.divider()
+        st.markdown("### Inkomsten categoriseren")
+        if income_df.empty:
+            st.caption("Geen openstaande inkomsten om te categoriseren.")
         for income_index, income_row in income_summary.reset_index(drop=True).iterrows():
             merchant_name = str(income_row["merchant"]).strip()
             merchant_key = merchant_name.lower()
@@ -3601,7 +3473,7 @@ elif chapter == "🏷️ Categorieën":
             if current_income_category not in INCOME_CATEGORIES:
                 current_income_category = "Overige inkomsten"
             with st.container(border=True):
-                income_left, income_mid, income_right = st.columns([3, 2, 1.6])
+                income_left, income_mid = st.columns([3, 2])
                 with income_left:
                     st.markdown(f"**{merchant_name.title()}**")
                     st.caption(f"{int(income_row['transactions'])} bijschrijvingen · {euro(float(income_row['total']))}")
@@ -3610,17 +3482,45 @@ elif chapter == "🏷️ Categorieën":
                         "Inkomstencategorie",
                         INCOME_CATEGORIES,
                         index=INCOME_CATEGORIES.index(current_income_category),
-                        key=f"income_category_{income_index}_{merchant_key}",
+                        key=f"bulk_income_category_{income_index}_{merchant_key}",
                         label_visibility="collapsed",
                     )
-                with income_right:
-                    if st.button("Categorie opslaan", key=f"save_income_category_{income_index}_{merchant_key}", use_container_width=True):
-                        saved_income_rule = save_merchant_category_rule(user_id, merchant_key, new_income_category)
-                        if saved_income_rule is not None:
-                            updated_income = update_transactions_for_merchant(user_id, merchant_key, new_income_category, flow="Inkomst")
-                            if updated_income is not None:
-                                st.success(f"{merchant_name.title()} → {new_income_category}")
-                                st.rerun()
+                pending_category_rules.append((merchant_key, new_income_category, "Inkomst"))
+
+        submitted_all_categories = st.form_submit_button(
+            "💾 Alles opslaan en toepassen",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if submitted_all_categories:
+        successful = 0
+        failed = []
+        for merchant, category, flow in pending_category_rules:
+            saved = save_merchant_category_rule(user_id, merchant, category)
+            if saved is None:
+                failed.append(merchant)
+                continue
+            updated = update_transactions_for_merchant(
+                user_id, merchant, category, flow=flow
+            )
+            if updated is None:
+                failed.append(merchant)
+                continue
+            successful += 1
+
+        if failed:
+            st.error(
+                f"{successful} regels opgeslagen. Niet alles kon worden bijgewerkt voor: "
+                + ", ".join(sorted(set(failed)))
+                + ". Controleer de foutmeldingen en probeer opnieuw."
+            )
+        else:
+            st.success(
+                f"✅ {successful} categorisatieregels opgeslagen en toegepast. "
+                "Ze worden onthouden voor toekomstige transacties en verdwijnen uit de openstaande lijst."
+            )
+            st.rerun()
 
     # --------------------------------------------------------
     # CUSTOM RULE
