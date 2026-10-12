@@ -4210,6 +4210,10 @@ elif chapter == "🎯 Budgetten":
                     and item.get("flow", "Uitgave") == "Uitgave"
                 ]
                 frequency_map = {
+                    "wekelijks": ("monthly", 1),
+                    "weekly": ("monthly", 1),
+                    "maandelijks": ("monthly", 1),
+                    "monthly": ("monthly", 1),
                     "per kwartaal": ("periodic", 3),
                     "quarterly": ("periodic", 3),
                     "halfjaarlijks": ("periodic", 6),
@@ -4223,6 +4227,8 @@ elif chapter == "🎯 Budgetten":
                     if frequency in frequency_map:
                         budget_type, period_months = frequency_map[frequency]
                         planned_amount = float(item.get("expected_amount", 0) or 0)
+                        if frequency in ("wekelijks", "weekly"):
+                            planned_amount *= 52.0 / 12.0
                         type_reason = f"Gebaseerd op opgeslagen terugkerende betaling ({item.get('frequency')})"
                         break
                 else:
