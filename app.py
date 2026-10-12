@@ -753,12 +753,7 @@ def load_accounts(user_id):
 # ============================================================
 
 def _load_transactions_paginated(user_id, account_id=None, page_size=1000):
-def load_transactions(
-    user_id,
-    account_id,
-):
-
-    """Fetch every matching transaction in pages; PostgREST defaults can cap rows."""
+    """Fetch matching transactions in pages to avoid PostgREST row limits."""
     rows = []
     start = 0
 
@@ -769,21 +764,7 @@ def load_transactions(
             .select("*")
             .eq("user_id", user_id)
             .order("date", desc=True)
-            .order("id", desc=True)
             .range(start, start + page_size - 1)
-            .eq(
-                "user_id",
-                user_id,
-            )
-            .eq(
-                "account_id",
-                account_id,
-            )
-            .order(
-                "date",
-                desc=True,
-            )
-            .execute()
         )
 
         if account_id is not None:
@@ -794,10 +775,6 @@ def load_transactions(
 
         if len(page) < page_size:
             break
-        st.error(
-            f"❌ Transacties konden niet "
-            f"worden geladen: {e}"
-        )
 
         start += page_size
 
@@ -805,45 +782,19 @@ def load_transactions(
 
 
 def load_transactions(user_id, account_id):
-def load_all_transactions(
-    user_id,
-):
-
     try:
         return _load_transactions_paginated(user_id, account_id)
-
     except Exception as e:
         st.error(f"❌ Transacties konden niet worden geladen: {e}")
         return []
-        result = (
-            supabase
-            .table("transactions")
-            .select("*")
-            .eq(
-                "user_id",
-                user_id,
-            )
-            .order(
-                "date",
-                desc=True,
-            )
-            .execute()
-        )
 
 
 def load_all_transactions(user_id):
-
     try:
         return _load_transactions_paginated(user_id)
-        st.error(
-            f"❌ Alle transacties konden niet "
-            f"worden geladen: {e}"
-        )
-
     except Exception as e:
         st.error(f"❌ Alle transacties konden niet worden geladen: {e}")
         return []
-
 
 def load_budgets(user_id):
 
