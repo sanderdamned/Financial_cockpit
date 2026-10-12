@@ -575,10 +575,31 @@ def exclude_transfers(df):
     if df.empty:
         return df.copy()
 
-    if "is_transfer" not in df.columns:
-        return df.copy()
+    result = df.copy()
 
-    return df[~df["is_transfer"]].copy()
+    if "is_transfer" in result.columns:
+        result = result[~result["is_transfer"].fillna(False)].copy()
+
+    # Transfers into savings/current accounts are visible in source reporting,
+    # but must not inflate real income or historical income forecasts.
+    if "flow" in result.columns and "category" in result.columns:
+        internal_income = (
+            result["flow"].eq("Inkomst")
+            & result["category"].fillna("").astype(str).str.strip().str.lower().eq("overboeking spaargeld")
+        )
+        result = result[~internal_income].copy()
+
+    if "flow" in result.columns:
+        descriptions = result.get("description", pd.Series("", index=result.index)).fillna("").astype(str)
+        merchants = result.get("merchant", pd.Series("", index=result.index)).fillna("").astype(str)
+        transfer_like = (descriptions + " " + merchants).str.contains(
+            r"overboeking|eigen rekening|spaarrekening|spaargeld|transfer from|overgemaakt van|interne overboeking",
+            case=False, regex=True, na=False,
+        )
+        transfer_income = transfer_like & result["flow"].eq("Inkomst")
+        result = result[~transfer_income].copy()
+
+    return result
 
 
 # ============================================================
@@ -882,6 +903,9 @@ def calculate_monthly_recurring_income(
             continue
 
         if item.get("flow") != "Inkomst":
+            continue
+
+        if str(item.get("category", "")).strip().lower() == "overboeking spaargeld":
             continue
 
         amount = float(
