@@ -680,6 +680,7 @@ def update_transactions_for_merchant(
     user_id,
     merchant,
     category,
+    flow=None,
 ):
 
     merchant = (
@@ -690,24 +691,16 @@ def update_transactions_for_merchant(
 
     try:
 
-        result = (
+        query = (
             supabase
             .table("transactions")
-            .update(
-                {
-                    "category": category
-                }
-            )
-            .eq(
-                "user_id",
-                user_id,
-            )
-            .eq(
-                "merchant",
-                merchant,
-            )
-            .execute()
+            .update({"category": category})
+            .eq("user_id", user_id)
+            .eq("merchant", merchant)
         )
+        if flow is not None:
+            query = query.eq("flow", flow)
+        result = query.execute()
 
         return result.data or []
 
@@ -3247,12 +3240,7 @@ elif chapter == "🏷️ Categorieën":
     ].copy()
 
     if expenses.empty:
-
-        st.info(
-            "Geen uitgaven gevonden."
-        )
-
-        st.stop()
+        st.info("Geen uitgaven gevonden. Je kunt hieronder wel inkomsten categoriseren.")
 
     st.info(
         "💡 Kies bijvoorbeeld "
@@ -3563,7 +3551,9 @@ elif chapter == "🏷️ Categorieën":
         st.info("Geen inkomsten gevonden.")
     else:
         income_df["amount"] = pd.to_numeric(income_df["amount"], errors="coerce").fillna(0)
-        income_df["merchant"] = income_df.get("merchant", "").fillna("Onbekend").astype(str)
+        if "merchant" not in income_df.columns:
+            income_df["merchant"] = "Onbekend"
+        income_df["merchant"] = income_df["merchant"].fillna("Onbekend").astype(str)
         income_summary = (
             income_df.groupby("merchant", dropna=False)
             .agg(transactions=("amount", "count"), total=("amount", lambda values: values.abs().sum()))
@@ -3597,7 +3587,7 @@ elif chapter == "🏷️ Categorieën":
                     if st.button("Categorie opslaan", key=f"save_income_category_{income_index}_{merchant_key}", use_container_width=True):
                         saved_income_rule = save_merchant_category_rule(user_id, merchant_key, new_income_category)
                         if saved_income_rule is not None:
-                            updated_income = update_transactions_for_merchant(user_id, merchant_key, new_income_category)
+                            updated_income = update_transactions_for_merchant(user_id, merchant_key, new_income_category, flow="Inkomst")
                             if updated_income is not None:
                                 st.success(f"{merchant_name.title()} → {new_income_category}")
                                 st.rerun()
@@ -4611,6 +4601,15 @@ elif chapter == "📆 Jaaranalyse":
         if not income_df.empty:
             income_df["Bedrag"] = pd.to_numeric(income_df["amount"], errors="coerce").abs()
             income_df["Bron"] = income_df.get("category", pd.Series("Overige inkomsten", index=income_df.index)).fillna("Overige inkomsten")
+            income_descriptions = income_df.get("description", pd.Series("", index=income_df.index)).fillna("").astype(str)
+            income_merchants = income_df.get("merchant", pd.Series("", index=income_df.index)).fillna("").astype(str)
+            transfer_mask = (income_descriptions + " " + income_merchants).str.contains(
+                r"overboeking|eigen rekening|spaarrekening|spaargeld|transfer from|overgemaakt van|interne overboeking",
+                case=False, regex=True, na=False,
+            )
+            income_df.loc[transfer_mask, "Bron"] = "Overboeking spaargeld"
+            if "is_transfer" in income_df.columns:
+                income_df.loc[income_df["is_transfer"].fillna(False), "Bron"] = "Overboeking spaargeld"
             income_df = income_df[income_df["date"].dt.year.isin(all_years)]
             income_by_year = income_df.pivot_table(
                 index="Bron", columns=income_df["date"].dt.year, values="Bedrag", aggfunc="sum", fill_value=0
