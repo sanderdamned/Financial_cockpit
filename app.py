@@ -49,6 +49,274 @@ st.set_page_config(
 
 
 # ============================================================
+# DESIGN SYSTEM — FINANCIAL COCKPIT
+# ============================================================
+
+st.markdown("""
+<style>
+:root {
+    --fc-ink: #172b4d;
+    --fc-muted: #6b778c;
+    --fc-line: #e6eaf0;
+    --fc-surface: #ffffff;
+    --fc-canvas: #f5f7fb;
+    --fc-accent: #476b8f;
+    --fc-accent-soft: #eaf1f7;
+    --fc-positive: #18794e;
+    --fc-negative: #b54745;
+}
+.stApp {
+    background: var(--fc-canvas);
+    color: var(--fc-ink);
+}
+[data-testid="stHeader"] {
+    background: rgba(245, 247, 251, 0.92);
+}
+[data-testid="stMainBlockContainer"] {
+    max-width: 1500px;
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+}
+h1, h2, h3 {
+    color: var(--fc-ink) !important;
+    letter-spacing: -0.035em;
+}
+h1 { font-weight: 750 !important; }
+h2, h3 { font-weight: 680 !important; }
+p, label, .stCaption, [data-testid="stCaptionContainer"] {
+    color: var(--fc-muted);
+}
+[data-testid="stMetric"] {
+    background: var(--fc-surface);
+    border: 1px solid var(--fc-line);
+    border-radius: 16px;
+    padding: 18px 20px 16px;
+    box-shadow: 0 3px 12px rgba(23, 43, 77, 0.035);
+    min-height: 116px;
+}
+[data-testid="stMetricLabel"] {
+    color: var(--fc-muted) !important;
+    font-size: 0.86rem !important;
+    font-weight: 600 !important;
+}
+[data-testid="stMetricValue"] {
+    color: var(--fc-ink) !important;
+    font-weight: 760 !important;
+    letter-spacing: -0.045em;
+}
+[data-testid="stMetricDelta"] {
+    font-size: 0.82rem !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: var(--fc-line) !important;
+    border-radius: 18px !important;
+    background: var(--fc-surface);
+    box-shadow: 0 4px 18px rgba(23, 43, 77, 0.035);
+}
+div[data-testid="stAlert"] {
+    border-radius: 14px;
+    border-width: 1px;
+}
+.stButton > button, .stDownloadButton > button {
+    border-radius: 10px;
+    font-weight: 650;
+    min-height: 2.65rem;
+    transition: all 120ms ease-in-out;
+}
+.stButton > button[kind="primary"] {
+    background: var(--fc-ink);
+    border-color: var(--fc-ink);
+}
+.stButton > button:hover {
+    border-color: var(--fc-accent);
+    color: var(--fc-accent);
+}
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stDateInput"] input,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+    border-radius: 10px;
+    border-color: #dce2ea;
+}
+[data-testid="stDataFrame"], [data-testid="stTable"] {
+    border: 1px solid var(--fc-line);
+    border-radius: 12px;
+    overflow: hidden;
+}
+[data-testid="stPlotlyChart"], [data-testid="stVegaLiteChart"], [data-testid="stArrowVegaLiteChart"] {
+    border-radius: 14px;
+}
+hr {
+    border-color: var(--fc-line);
+    margin-top: 1.6rem;
+    margin-bottom: 1.6rem;
+}
+section[data-testid="stSidebar"] {
+    background: #eef2f7;
+    border-right: 1px solid #e0e6ee;
+}
+section[data-testid="stSidebar"] > div {
+    padding-top: 1.4rem;
+}
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+    color: #68778c;
+}
+section[data-testid="stSidebar"] [data-testid="stRadio"] > div {
+    gap: 5px;
+}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label {
+    border-radius: 10px;
+    padding: 7px 9px;
+}
+section[data-testid="stSidebar"] [data-testid="stRadio"] label:hover {
+    background: #e1e8f0;
+}
+.fc-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 10px 0;
+}
+.fc-brand-mark {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    color: white;
+    background: #203a59;
+    font-size: 21px;
+    font-weight: 800;
+    box-shadow: 0 5px 12px rgba(32, 58, 89, .18);
+}
+.fc-brand-name {
+    color: #172b4d;
+    font-size: 1.12rem;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    line-height: 1.15;
+}
+.fc-brand-sub {
+    color: #77859a;
+    font-size: .73rem;
+    margin-top: 4px;
+}
+.fc-hero {
+    position: relative;
+    overflow: hidden;
+    padding: 26px 30px;
+    margin-bottom: 22px;
+    border-radius: 22px;
+    background: linear-gradient(120deg, #203a59 0%, #315778 100%);
+    color: #ffffff;
+    box-shadow: 0 10px 28px rgba(32, 58, 89, .13);
+}
+.fc-hero:after {
+    content: "";
+    position: absolute;
+    width: 230px;
+    height: 230px;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 50%;
+    right: -55px;
+    top: -100px;
+    box-shadow: 0 0 0 28px rgba(255,255,255,.035), 0 0 0 58px rgba(255,255,255,.025);
+}
+.fc-eyebrow {
+    color: #c9d8e7;
+    text-transform: uppercase;
+    font-size: .72rem;
+    font-weight: 750;
+    letter-spacing: .13em;
+    margin-bottom: 8px;
+}
+.fc-hero-title {
+    color: #ffffff;
+    font-size: clamp(1.65rem, 2.6vw, 2.35rem);
+    font-weight: 800;
+    letter-spacing: -.055em;
+    line-height: 1.1;
+    margin: 0;
+}
+.fc-hero-copy {
+    color: #e0e9f1;
+    font-size: .96rem;
+    margin-top: 10px;
+    max-width: 620px;
+}
+.fc-hero-meta {
+    display: inline-block;
+    color: #edf3f8;
+    background: rgba(255,255,255,.10);
+    border: 1px solid rgba(255,255,255,.15);
+    border-radius: 999px;
+    padding: 6px 11px;
+    margin-top: 16px;
+    font-size: .78rem;
+}
+.fc-insight {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 18px 20px;
+    border-radius: 16px;
+    border: 1px solid #d8e5ef;
+    background: linear-gradient(110deg, #f0f6fb 0%, #ffffff 100%);
+    margin: 12px 0 8px;
+}
+.fc-insight-icon {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 13px;
+    color: #315778;
+    background: #dfeaf4;
+    font-size: 21px;
+}
+.fc-insight-label {
+    color: #66788b;
+    font-size: .8rem;
+    font-weight: 650;
+    margin-bottom: 3px;
+}
+.fc-insight-value {
+    color: #203a59;
+    font-size: 1.28rem;
+    font-weight: 800;
+    letter-spacing: -.035em;
+}
+.fc-insight-copy {
+    color: #728197;
+    font-size: .82rem;
+    margin-top: 3px;
+}
+@media (max-width: 768px) {
+    [data-testid="stMainBlockContainer"] {
+        padding: 1rem 1rem 2rem;
+    }
+    [data-testid="stMetric"] {
+        padding: 13px 14px;
+        min-height: 96px;
+    }
+    .fc-hero {
+        padding: 22px 20px;
+        border-radius: 18px;
+    }
+    .fc-insight {
+        align-items: flex-start;
+        padding: 15px;
+    }
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ============================================================
 # DATE / PERIOD HELPERS
 # ============================================================
 
@@ -2059,18 +2327,21 @@ if not accounts:
 
 with st.sidebar:
 
-    st.title(
-        "💰 Financial Cockpit"
+    st.markdown(
+        """
+        <div class="fc-brand">
+            <div class="fc-brand-mark">F</div>
+            <div>
+                <div class="fc-brand-name">Financial Cockpit</div>
+                <div class="fc-brand-sub">Jouw persoonlijke CFO</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.caption(
-        f"Ingelogd als {user.email}"
-    )
-
-    st.caption(
-        f"📅 Vandaag: "
-        f"{today().strftime('%d-%m-%Y')}"
-    )
+    st.caption(f"Ingelogd als {user.email}")
+    st.caption(f"Vandaag · {today().strftime('%d-%m-%Y')}")
 
     st.divider()
 
@@ -2181,22 +2452,23 @@ def income_source_summary(df):
 
 if chapter == "📊 Overzicht":
 
-    st.title(
-        "📊 Overzicht"
-    )
-
-    st.caption(
-        "Je financiële situatie in één oogopslag."
+    st.markdown(
+        f"""
+        <div class="fc-hero">
+            <div class="fc-eyebrow">Persoonlijk financieel overzicht</div>
+            <div class="fc-hero-title">Goed inzicht begint hier.</div>
+            <div class="fc-hero-copy">
+                Je geld, je gewoontes en je vooruitzicht — overzichtelijk op één plek.
+            </div>
+            <div class="fc-hero-meta">📅 {today().strftime('%A %d %B %Y')}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     # --------------------------------------------------------
-    # DATE
+    # MONTH SELECTOR
     # --------------------------------------------------------
-
-    st.info(
-        f"📅 Vandaag is "
-        f"**{today().strftime('%d-%m-%Y')}**."
-    )
 
     # --------------------------------------------------------
     # MONTH SELECTOR
@@ -2629,10 +2901,20 @@ if chapter == "📊 Overzicht":
         )
     )
 
-    st.info(
-        f"💳 Je kunt volgens deze berekening "
-        f"ongeveer **{euro(safe_to_spend)}** "
-        "extra uitgeven."
+    st.markdown(
+        f"""
+        <div class="fc-insight">
+            <div class="fc-insight-icon">↗</div>
+            <div>
+                <div class="fc-insight-label">Ruimte om extra uit te geven</div>
+                <div class="fc-insight-value">{euro(safe_to_spend)}</div>
+                <div class="fc-insight-copy">
+                    Indicatie op basis van de huidige maandforecast; houd rekening met je gewenste buffer.
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     # --------------------------------------------------------
