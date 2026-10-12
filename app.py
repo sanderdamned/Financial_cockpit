@@ -1740,10 +1740,10 @@ def categorize_import_transaction(
         if category in allowed_categories and any(keyword in text for keyword in keywords):
             return category
 
-    # Kleine uitgaven is uitsluitend de fallback voor uitgaven onder €25
+    # Kleine uitgaven is uitsluitend de fallback voor uitgaven onder €15
     # waarvoor geen specifiekere categorie of opgeslagen regel is gevonden.
     try:
-        if flow == "Uitgave" and amount is not None and abs(float(amount)) < 25:
+        if flow == "Uitgave" and amount is not None and abs(float(amount)) < 15:
             return "Kleine uitgaven"
     except (TypeError, ValueError):
         pass
