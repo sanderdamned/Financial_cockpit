@@ -335,6 +335,16 @@ DUTCH_MONTHS = {
     12: "december",
 }
 
+DUTCH_WEEKDAYS = [
+    "maandag",
+    "dinsdag",
+    "woensdag",
+    "donderdag",
+    "vrijdag",
+    "zaterdag",
+    "zondag",
+]
+
 
 def today():
     """
@@ -2460,7 +2470,7 @@ if chapter == "📊 Overzicht":
             <div class="fc-hero-copy">
                 Je geld, je gewoontes en je vooruitzicht — overzichtelijk op één plek.
             </div>
-            <div class="fc-hero-meta">📅 {["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"][today().weekday()]} {today().day} {DUTCH_MONTHS[today().month]} {today().year}</div>
+            <div class="fc-hero-meta">📅 {DUTCH_WEEKDAYS[today().weekday()]} {today().day} {DUTCH_MONTHS[today().month]} {today().year}</div>
         </div>
         """,
         unsafe_allow_html=True,
