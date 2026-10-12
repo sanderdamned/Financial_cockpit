@@ -4164,30 +4164,42 @@ elif chapter == "🎯 Budgetten":
         history["expense_amount"] = pd.to_numeric(history["amount"], errors="coerce").abs()
         history = history[history["expense_amount"].notna()]
         this_month = pd.Timestamp(date.today().replace(day=1))
-        history_start = this_month - pd.DateOffset(months=12)
+        history_start = this_month - pd.DateOffset(months=36)
         history = history[(history["date"] >= history_start) & (history["date"] < this_month)]
 
         if "category" not in history.columns:
             history["category"] = "Overig"
+        history["category"] = history["category"].fillna("Overig")
 
-        # Include zero-spend months in the monthly average.
+        # Look back 36 months so annual and infrequent expenses aren't missed.
+        # Monthly recommendations still use the latest 12 completed months.
         if not history.empty:
+            history["month"] = history["date"].dt.to_period("M")
             monthly_totals = (
-                history.groupby(["category", history["date"].dt.to_period("M")])["expense_amount"]
+                history.groupby(["category", "month"])["expense_amount"]
                 .sum().reset_index()
             )
-            monthly_totals.columns = ["category", "month", "amount"]
-            for category in sorted(history["category"].fillna("Overig").unique()):
+            for category in sorted(history["category"].unique()):
+                category_history = history[history["category"] == category]
                 category_months = monthly_totals[monthly_totals["category"] == category]
-                monthly_average = float(category_months["amount"].sum()) / 12.0
-                category_total = float(category_months["amount"].sum())
-                if monthly_average <= 0:
+                category_total = float(category_history["expense_amount"].sum())
+                recent_start = this_month - pd.DateOffset(months=12)
+                recent_total = float(
+                    category_history.loc[category_history["date"] >= recent_start, "expense_amount"].sum()
+                )
+                monthly_average = recent_total / 12.0
+                spending_month_count = int(category_history["month"].nunique())
+                if category_total <= 0:
                     continue
 
                 budget_type = "monthly"
                 period_months = 1
-                planned_amount = monthly_average
-                type_reason = "Gemiddelde per maand over de laatste 12 volledige maanden"
+                planned_amount = monthly_average if monthly_average > 0 else category_total / 36.0
+                type_reason = (
+                    "Gemiddelde per maand over de laatste 12 volledige maanden"
+                    if monthly_average > 0
+                    else "Spreiding van oudere uitgaven over 36 maanden; controleer dit voorstel"
+                )
 
                 # Where the user has already configured a recurring payment,
                 # retain its real frequency and amount for the suggestion.
@@ -4213,6 +4225,19 @@ elif chapter == "🎯 Budgetten":
                         planned_amount = float(item.get("expected_amount", 0) or 0)
                         type_reason = f"Gebaseerd op opgeslagen terugkerende betaling ({item.get('frequency')})"
                         break
+                else:
+                    # Sparse historical categories often represent annual or
+                    # periodic bills. These are estimates, and remain editable.
+                    if spending_month_count <= 3:
+                        budget_type = "annual"
+                        period_months = 12
+                        planned_amount = category_total / 3.0
+                        type_reason = "Schatting van jaarlijkse uitgaven op basis van maximaal 36 maanden historie"
+                    elif spending_month_count <= 9:
+                        budget_type = "periodic"
+                        period_months = min(12, max(2, round(36 / spending_month_count)))
+                        planned_amount = category_total / max(1, spending_month_count) * period_months
+                        type_reason = f"Schatting van periodieke uitgaven; ongeveer elke {period_months} maanden"
 
                 suggestions.append({
                     "category": str(category),
@@ -4283,37 +4308,41 @@ elif chapter == "🎯 Budgetten":
         )
 
     with st.expander("➕ Zelf een budget toevoegen", expanded=not bool(budgets)):
-        add_category = st.selectbox(
-            "Categorie",
-            [c for c in CATEGORIES if c != "Inkomen" and c not in existing_by_category],
-            key="budget_add_category",
-        )
-        add_type_label = st.selectbox(
-            "Soort uitgave",
-            ["Maandelijks", "Periodiek", "Jaarlijks"],
-            key="budget_add_type",
-        )
-        add_type = {"Maandelijks": "monthly", "Periodiek": "periodic", "Jaarlijks": "annual"}[add_type_label]
-        add_period_months = 1
-        if add_type == "periodic":
-            add_period_months = st.selectbox(
-                "Herhaling elke",
-                [2, 3, 4, 6, 9, 12],
-                format_func=lambda x: f"{x} maanden",
-                key="budget_add_period",
+        available_budget_categories = [
+            c for c in CATEGORIES if c != "Inkomen" and c not in existing_by_category
+        ]
+        if not available_budget_categories:
+            st.info("Alle beschikbare categorieën hebben al een budget. Pas een bestaand budget hierboven aan.")
+        else:
+            add_category = st.selectbox(
+                "Categorie", available_budget_categories, key="budget_add_category",
             )
-        add_amount_label = "Bedrag per jaar" if add_type == "annual" else (
-            "Bedrag per periode" if add_type == "periodic" else "Bedrag per maand"
-        )
-        add_amount = st.number_input(
-            add_amount_label, min_value=0.0, step=10.0, value=100.0,
-            format="%.2f", key="budget_add_amount",
-        )
-        if st.button("Budget toevoegen", type="primary", use_container_width=True, key="budget_add_save"):
-            saved = save_budget(user_id, add_category, add_amount, add_type, add_period_months)
-            if saved is not None:
-                st.success(f"Budget voor {add_category} opgeslagen.")
-                st.rerun()
+            add_type_label = st.selectbox(
+                "Soort uitgave",
+                ["Maandelijks", "Periodiek", "Jaarlijks"],
+                key="budget_add_type",
+            )
+            add_type = {"Maandelijks": "monthly", "Periodiek": "periodic", "Jaarlijks": "annual"}[add_type_label]
+            add_period_months = 1
+            if add_type == "periodic":
+                add_period_months = st.selectbox(
+                    "Herhaling elke",
+                    [2, 3, 4, 6, 9, 12],
+                    format_func=lambda x: f"{x} maanden",
+                    key="budget_add_period",
+                )
+            add_amount_label = "Bedrag per jaar" if add_type == "annual" else (
+                "Bedrag per periode" if add_type == "periodic" else "Bedrag per maand"
+            )
+            add_amount = st.number_input(
+                add_amount_label, min_value=0.0, step=10.0, value=100.0,
+                format="%.2f", key="budget_add_amount",
+            )
+            if st.button("Budget toevoegen", type="primary", use_container_width=True, key="budget_add_save"):
+                saved = save_budget(user_id, add_category, add_amount, add_type, add_period_months)
+                if saved is not None:
+                    st.success(f"Budget voor {add_category} opgeslagen.")
+                    st.rerun()
 
     budgets = load_budgets(user_id)
     if budgets:
