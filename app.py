@@ -4567,7 +4567,6 @@ elif chapter == "📆 Jaaranalyse":
         annual_df = transaction_df.copy()
         annual_df["date"] = pd.to_datetime(annual_df["date"], errors="coerce")
         annual_df = annual_df[annual_df["date"].notna()]
-        annual_df = annual_df[~annual_df.get("is_transfer", pd.Series(False, index=annual_df.index)).fillna(False)]
         current_year = date.today().year
         full_years = [current_year - 3, current_year - 2, current_year - 1]
         all_years = full_years + [current_year]
@@ -4579,6 +4578,8 @@ elif chapter == "📆 Jaaranalyse":
         for year in all_years:
             year_df = annual_df[annual_df["date"].dt.year == year]
             income_rows = year_df[year_df["flow"] == "Inkomst"].copy()
+            if "is_transfer" in income_rows.columns:
+                income_rows = income_rows[~income_rows["is_transfer"].fillna(False)]
             if "category" in income_rows.columns:
                 income_rows = income_rows[
                     income_rows["category"].fillna("").astype(str).str.strip().str.lower() != "overboeking spaargeld"
@@ -4592,7 +4593,10 @@ elif chapter == "📆 Jaaranalyse":
                 )
                 income_rows = income_rows[~income_transfer_mask]
             income = float(income_rows["amount"].sum())
-            expenses = float(year_df.loc[year_df["flow"] == "Uitgave", "amount"].abs().sum())
+            expense_rows = year_df[year_df["flow"] == "Uitgave"].copy()
+            if "is_transfer" in expense_rows.columns:
+                expense_rows = expense_rows[~expense_rows["is_transfer"].fillna(False)]
+            expenses = float(expense_rows["amount"].abs().sum())
             summary_rows.append({
                 "Jaar": year,
                 "Periode": "Lopend jaar" if year == current_year else "Volledig kalenderjaar",
