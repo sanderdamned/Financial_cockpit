@@ -4,6 +4,8 @@ from datetime import date
 import pandas as pd
 
 from financial_engine import (
+    detect_recurring_transactions,
+    get_financial_period_start,
     calculate_forecast_data_quality,
     calculate_historical_monthly_average,
     calculate_variable_expense_average,
@@ -157,6 +159,47 @@ class ForecastBaselineTests(unittest.TestCase):
         )
         self.assertTrue(result["available"])
         self.assertAlmostEqual(result["projected_balance"], 2350.0)
+
+    def test_recurring_detector_requires_three_completed_periods(self):
+        today = pd.Timestamp("2026-10-13")
+        rows = [
+            {"date": "2026-06-30", "flow": "Uitgave", "amount": -19.99, "category": "Abonnementen", "merchant": "StreamCo"},
+            {"date": "2026-07-30", "flow": "Uitgave", "amount": -19.99, "category": "Abonnementen", "merchant": "StreamCo"},
+            {"date": "2026-08-30", "flow": "Uitgave", "amount": -19.99, "category": "Abonnementen", "merchant": "StreamCo"},
+            # A transaction in the current financial period must not count.
+            {"date": "2026-10-01", "flow": "Uitgave", "amount": -499.00, "category": "Elektronica", "merchant": "OneOff"},
+        ]
+        result = detect_recurring_transactions(
+            pd.DataFrame(rows),
+            period_start_day=25,
+            period_type="maandelijks",
+            today=today,
+        )
+        self.assertEqual([item["merchant"] for item in result], ["StreamCo"])
+        self.assertEqual(result[0]["period_count"], 3)
+        self.assertAlmostEqual(result[0]["expected_amount"], 19.99)
+
+    def test_recurring_detector_excludes_merchant_with_multiple_monthly_payments(self):
+        rows = [
+            {"date": "2026-07-03", "flow": "Uitgave", "amount": -15, "category": "Boodschappen", "merchant": "Market"},
+            {"date": "2026-07-17", "flow": "Uitgave", "amount": -18, "category": "Boodschappen", "merchant": "Market"},
+            {"date": "2026-08-03", "flow": "Uitgave", "amount": -15, "category": "Boodschappen", "merchant": "Market"},
+            {"date": "2026-08-17", "flow": "Uitgave", "amount": -18, "category": "Boodschappen", "merchant": "Market"},
+            {"date": "2026-09-03", "flow": "Uitgave", "amount": -15, "category": "Boodschappen", "merchant": "Market"},
+            {"date": "2026-09-17", "flow": "Uitgave", "amount": -18, "category": "Boodschappen", "merchant": "Market"},
+        ]
+        result = detect_recurring_transactions(
+            pd.DataFrame(rows),
+            period_start_day=1,
+            period_type="maandelijks",
+            today="2026-10-13",
+        )
+        self.assertEqual(result, [])
+
+    def test_four_week_periods_use_28_day_cycle(self):
+        first = get_financial_period_start("2026-10-13", 25, "4 weken")
+        next_period = get_financial_period_start(first + pd.Timedelta(days=28), 25, "4 weken")
+        self.assertEqual((next_period - first).days, 28)
 
     def test_insights_flag_negative_forecast_and_budget_overrun(self):
         insights = generate_financial_insights(
