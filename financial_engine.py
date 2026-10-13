@@ -250,7 +250,7 @@ def detect_recurring_transactions(
     completed_start_set = set(completed_starts)
     last_completed_end = current_start - pd.Timedelta(days=1)
 
-    data = data[(data["date"] <= last_completed_end)].copy()
+    data = data[data["date"] < current_start].copy()
     if data.empty:
         return []
 
