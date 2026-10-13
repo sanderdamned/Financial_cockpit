@@ -4205,6 +4205,34 @@ elif chapter == "🔄 Terugkerend":
             row["Betrouwbaarheid"] = item.get("reliability", "-")
             insight_rows.append(row)
         st.dataframe(pd.DataFrame(insight_rows), hide_index=True, use_container_width=True)
+
+        monthly_factor = 13 / 12 if financial_period_type == "4 weken" else 1
+        category_totals = {}
+        for item in actual_recurring:
+            category_name = item.get("category", "Overig") or "Overig"
+            category_totals[category_name] = category_totals.get(category_name, 0.0) + (
+                float(item.get("expected_amount", 0) or 0) * monthly_factor
+            )
+        if category_totals:
+            st.subheader("Terugkerende kosten per categorie")
+            category_chart = pd.DataFrame([
+                {"Categorie": name, "Gemiddeld per maand (€)": amount}
+                for name, amount in sorted(
+                    category_totals.items(),
+                    key=lambda pair: pair[1],
+                    reverse=True,
+                )
+            ])
+            st.bar_chart(category_chart.set_index("Categorie"))
+            category_display = category_chart.copy()
+            category_display["Gemiddeld per maand"] = category_display[
+                "Gemiddeld per maand (€)"
+            ].map(euro)
+            st.dataframe(
+                category_display[["Categorie", "Gemiddeld per maand"]],
+                hide_index=True,
+                use_container_width=True,
+            )
         st.caption(
             "Een kostenpost wordt alleen bevestigd bij één betaling per periode "
             "in alle drie de laatste afgeronde periodes. Eenmalige grote uitgaven "
