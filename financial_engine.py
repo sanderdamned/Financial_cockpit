@@ -531,6 +531,13 @@ def _frequency_interval(frequency):
         return pd.DateOffset(months=1)
 
     if frequency in (
+        "elke 4 weken",
+        "4 weken",
+        "every 4 weeks"
+    ):
+        return pd.Timedelta(days=28)
+
+    if frequency in (
         "per kwartaal",
         "quarterly"
     ):
@@ -563,6 +570,13 @@ def _monthly_frequency_multiplier(frequency):
         "monthly"
     ):
         return 1
+
+    if frequency in (
+        "elke 4 weken",
+        "4 weken",
+        "every 4 weeks"
+    ):
+        return 13 / 12
 
     if frequency in (
         "per kwartaal",
@@ -626,33 +640,8 @@ def calculate_monthly_recurring_cost(
 def calculate_yearly_recurring_cost(
     recurring_transactions
 ):
-
-    yearly_cost = 0.0
-
-    for item in recurring_transactions:
-
-        if not item.get("active", True):
-            continue
-
-        if item.get("flow", "Uitgave") != "Uitgave":
-            continue
-
-        if str(item.get("category", "")).strip().lower() == "overboeking spaargeld":
-            continue
-
-        if item.get("reliability") == "Laag":
-            continue
-
-        if item.get("frequency") != "Jaarlijks":
-            continue
-
-        amount = float(
-            item.get("expected_amount", 0) or 0
-        )
-
-        yearly_cost += amount
-
-    return float(yearly_cost)
+    """Annualize all active, reliable recurring expenses."""
+    return float(calculate_monthly_recurring_cost(recurring_transactions) * 12)
 
 
 # ============================================================
