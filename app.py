@@ -2224,6 +2224,19 @@ user = st.session_state[
 
 user_id = user.id
 
+# Financial period preferences are stored in Supabase Auth user metadata, so
+# each user's configuration persists without requiring a database migration.
+user_metadata = getattr(user, "user_metadata", {}) or {}
+financial_period_start_day = max(
+    1,
+    min(31, int(user_metadata.get("financial_period_start_day", 1) or 1)),
+)
+financial_period_type = str(
+    user_metadata.get("financial_period_type", "maandelijks") or "maandelijks"
+)
+if financial_period_type not in ("maandelijks", "4 weken"):
+    financial_period_type = "maandelijks"
+
 
 # ============================================================
 # LOAD CORE DATA
@@ -2439,6 +2452,23 @@ saved_recurring = (
         selected_account_id,
     )
 )
+
+# Forecasts only use recurring expenses supported by the latest three
+# completed financial periods. Old detections stay stored but are excluded
+# from current calculations until the transactions recur again.
+actual_recurring = detect_recurring_transactions(
+    transaction_df,
+    period_start_day=financial_period_start_day,
+    period_type=financial_period_type,
+)
+actual_recurring_merchants = {
+    str(item.get("merchant", "")).strip().lower()
+    for item in actual_recurring
+}
+saved_recurring = [
+    item for item in saved_recurring
+    if str(item.get("merchant", "")).strip().lower() in actual_recurring_merchants
+]
 
 budgets = load_budgets(
     user_id
@@ -4132,6 +4162,62 @@ elif chapter == "🔄 Terugkerend":
     )
 
     st.caption(
+        "Alleen kosten die in elk van de laatste drie volledig afgeronde "
+        "financiële periodes daadwerkelijk zijn afgeschreven, tellen mee."
+    )
+
+    if actual_recurring:
+        st.subheader("Werkelijk terugkerende kosten")
+        st.caption(
+            f"Periode: {financial_period_type}, start op de "
+            f"{financial_period_start_day}e. De lopende periode telt nog niet mee."
+        )
+        actual_monthly_estimate = sum(
+            float(item.get("expected_amount", 0) or 0)
+            * (13 / 12 if item.get("frequency") == "Elke 4 weken" else 1)
+            for item in actual_recurring
+        )
+        actual_yearly_estimate = sum(
+            float(item.get("expected_amount", 0) or 0)
+            * (13 if item.get("frequency") == "Elke 4 weken" else 12)
+            for item in actual_recurring
+        )
+        metric1, metric2, metric3 = st.columns(3)
+        metric1.metric("Bevestigde kostenposten", len(actual_recurring))
+        metric2.metric("Gemiddeld per maand", euro(actual_monthly_estimate))
+        metric3.metric("Geschat per jaar", euro(actual_yearly_estimate))
+
+        insight_rows = []
+        period_labels = list(actual_recurring[0].get("period_amounts", {}).keys())
+        period_labels = sorted(
+            period_labels,
+            key=lambda value: pd.to_datetime(value, format="%d-%m-%Y", errors="coerce")
+        )
+        for item in actual_recurring:
+            amounts_by_period = item.get("period_amounts", {})
+            row = {
+                "Kostenpost": item.get("merchant", "Onbekend"),
+                "Categorie": item.get("category", "Overig"),
+            }
+            for label in period_labels:
+                row[label] = euro(amounts_by_period.get(label, 0))
+            row["Gemiddeld"] = euro(item.get("expected_amount", 0))
+            row["Betrouwbaarheid"] = item.get("reliability", "-")
+            insight_rows.append(row)
+        st.dataframe(pd.DataFrame(insight_rows), hide_index=True, use_container_width=True)
+        st.caption(
+            "Een kostenpost wordt alleen bevestigd bij één betaling per periode "
+            "in alle drie de laatste afgeronde periodes. Eenmalige grote uitgaven "
+            "worden niet als terugkerend aangemerkt."
+        )
+    else:
+        st.info(
+            "Nog geen kostenposten gevonden die in alle drie de laatste "
+            "volledig afgeronde periodes terugkomen. Controleer of voldoende "
+            "transactiehistorie is geïmporteerd."
+        )
+
+    st.caption(
         "Financial Cockpit zoekt naar betalingen "
         "die regelmatig terugkomen."
     )
@@ -4175,10 +4261,10 @@ elif chapter == "🔄 Terugkerend":
         # DETECT
         # ----------------------------------------------------
 
-        detected = (
-            detect_recurring_transactions(
-                recurring_input
-            )
+        detected = detect_recurring_transactions(
+            recurring_input,
+            period_start_day=financial_period_start_day,
+            period_type=financial_period_type,
         )
 
         # Safely handle None
@@ -5237,6 +5323,46 @@ elif chapter == "⚙️ Instellingen":
     st.write(
         f"**E-mailadres:** {user.email}"
     )
+
+    st.divider()
+
+    st.subheader("📅 Financiële periode")
+    st.caption(
+        "Stel je eigen budgetperiode in. Dit wordt gebruikt bij de detectie "
+        "van terugkerende kosten en bij het meenemen van die kosten in prognoses."
+    )
+    with st.form("financial_period_settings"):
+        period_type_options = ["Kalendermaand", "Elke 4 weken"]
+        period_type_index = 1 if financial_period_type == "4 weken" else 0
+        period_type_choice = st.selectbox(
+            "Lengte van de periode",
+            period_type_options,
+            index=period_type_index,
+        )
+        period_start_day_choice = st.number_input(
+            "Startdag van de periode",
+            min_value=1,
+            max_value=31,
+            value=financial_period_start_day,
+            step=1,
+            help="Bijvoorbeeld 25: de kalendermaand loopt dan van de 25e tot en met de 24e. Bij 4 weken is deze datum het anker voor de cyclus van 28 dagen.",
+        )
+        save_period_settings = st.form_submit_button("Periode-instelling opslaan")
+    if save_period_settings:
+        new_period_type = "4 weken" if period_type_choice == "Elke 4 weken" else "maandelijks"
+        try:
+            response = supabase.auth.update_user({
+                "data": {
+                    "financial_period_start_day": int(period_start_day_choice),
+                    "financial_period_type": new_period_type,
+                }
+            })
+            if getattr(response, "user", None):
+                st.session_state["user"] = response.user
+            st.success("Financiële periode opgeslagen.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Instellingen konden niet worden opgeslagen: {e}")
 
     st.divider()
 
