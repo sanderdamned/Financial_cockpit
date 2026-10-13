@@ -157,409 +157,176 @@ def detect_transfer_transactions(df, days_tolerance=1, amount_tolerance=0.01):
 
 
 # ============================================================
+# FINANCIAL PERIODS
+# ============================================================
+
+def get_financial_period_start(value, start_day=1, period_type="maandelijks"):
+    """Return the start date of the financial period containing value.
+
+    Monthly periods start on the configured day of each month. Four-week
+    periods use a stable 28-day cycle anchored to that day in January 2000.
+    """
+    timestamp = pd.Timestamp(value).normalize()
+    start_day = max(1, min(31, int(start_day or 1)))
+    period_type = str(period_type or "maandelijks").strip().lower()
+
+    if period_type in ("4 weken", "4-weken", "4_weken", "vier weken", "four weeks"):
+        anchor = pd.Timestamp(year=2000, month=1, day=start_day)
+        elapsed_days = (timestamp - anchor).days
+        return anchor + pd.Timedelta(days=(elapsed_days // 28) * 28)
+
+    day = min(start_day, pd.Period(timestamp, freq="M").days_in_month)
+    candidate = pd.Timestamp(year=timestamp.year, month=timestamp.month, day=day)
+    if timestamp < candidate:
+        previous_month = timestamp - pd.DateOffset(months=1)
+        previous_day = min(start_day, pd.Period(previous_month, freq="M").days_in_month)
+        candidate = pd.Timestamp(
+            year=previous_month.year,
+            month=previous_month.month,
+            day=previous_day,
+        )
+    return candidate
+
+
+def _shift_financial_period_start(period_start, periods, start_day=1, period_type="maandelijks"):
+    """Move a financial period start backwards or forwards by whole periods."""
+    period_start = pd.Timestamp(period_start).normalize()
+    period_type = str(period_type or "maandelijks").strip().lower()
+    if period_type in ("4 weken", "4-weken", "4_weken", "vier weken", "four weeks"):
+        return period_start + pd.Timedelta(days=28 * int(periods))
+
+    target_month = period_start + pd.DateOffset(months=int(periods))
+    day = min(max(1, int(start_day or 1)), pd.Period(target_month, freq="M").days_in_month)
+    return pd.Timestamp(year=target_month.year, month=target_month.month, day=day)
+
+
+# ============================================================
 # RECURRING TRANSACTION DETECTION
 # ============================================================
 
-def detect_recurring_transactions(df):
-    """
-    Detect recurring transactions.
-
-    Rules:
-
-    1. One-time transactions below €150:
-       - ignored completely
-
-    2. One-time transactions of €150 or more:
-       - treated as yearly recurring
-       - marked as is_one_time_large=True
-
-    3. Multiple transactions:
-
-       WEEKLY:
-       - transaction must occur in at least 60% of the
-         relevant weeks
-       - interval must be approximately weekly
-
-       MONTHLY:
-       - transaction must occur in each of the last 3 months
-         OR
-       - transaction must occur in at least 60% of the
-         relevant weeks
-       - interval must be approximately monthly
-
-       QUARTERLY:
-       - interval approximately 3 months
-
-       YEARLY:
-       - interval approximately 1 year
-
-    4. Amount variation determines reliability.
-
-    5. Low reliability transactions are retained as detected
-       data, but excluded from recurring financial calculations.
-    """
-
+def detect_recurring_transactions(
+    df,
+    period_start_day=1,
+    period_type="maandelijks",
+    today=None,
+):
+    """Find expenses that occurred in each of the last 3 completed periods."""
     if df is None or df.empty:
         return []
 
-    required = {
-        "date",
-        "merchant",
-        "amount",
-        "flow",
-    }
-
+    required = {"date", "merchant", "amount", "flow"}
     if not required.issubset(df.columns):
         return []
 
     data = df.copy()
+    data["date"] = pd.to_datetime(data["date"], errors="coerce")
+    data["amount"] = pd.to_numeric(data["amount"], errors="coerce")
+    data = data.dropna(subset=["date", "amount", "merchant"])
+    data = data[data["flow"].astype(str).str.strip().eq("Uitgave")].copy()
+    if data.empty:
+        return []
 
-    data["date"] = pd.to_datetime(
-        data["date"],
-        errors="coerce",
-    )
+    if "is_transfer" in data.columns:
+        data = data[~data["is_transfer"].fillna(False).astype(bool)].copy()
+    if "category" in data.columns:
+        internal = data["category"].fillna("").astype(str).str.strip().str.lower().eq("overboeking spaargeld")
+        data = data[~internal].copy()
 
-    data["amount"] = pd.to_numeric(
-        data["amount"],
-        errors="coerce",
-    )
+    transfer_pattern = r"overboeking|eigen rekening|spaarrekening|spaargeld|transfer from|overgemaakt van|interne overboeking"
+    descriptions = data.get("description", pd.Series("", index=data.index)).fillna("").astype(str)
+    merchants = data["merchant"].fillna("").astype(str)
+    data = data[~(descriptions + " " + merchants).str.contains(transfer_pattern, case=False, regex=True, na=False)].copy()
+    data["merchant"] = data["merchant"].astype(str).str.strip()
+    data = data[data["merchant"].ne("")]
+    if data.empty:
+        return []
 
-    data = data.dropna(
-        subset=[
-            "date",
-            "amount",
-        ]
-    )
-
-    # Alleen uitgaven analyseren
-    data = data[
-        data["flow"] == "Uitgave"
+    today_ts = pd.Timestamp(today if today is not None else pd.Timestamp.today()).normalize()
+    current_start = get_financial_period_start(today_ts, period_start_day, period_type)
+    completed_starts = [
+        _shift_financial_period_start(current_start, -offset, period_start_day, period_type)
+        for offset in (1, 2, 3)
     ]
+    completed_start_set = set(completed_starts)
+    last_completed_end = current_start - pd.Timedelta(days=1)
 
+    data = data[(data["date"] <= last_completed_end)].copy()
+    if data.empty:
+        return []
+
+    data["financial_period_start"] = data["date"].map(
+        lambda value: get_financial_period_start(value, period_start_day, period_type)
+    )
+    data = data[data["financial_period_start"].isin(completed_start_set)].copy()
     if data.empty:
         return []
 
     results = []
-
-    # ========================================================
-    # ANALYSE PER MERCHANT
-    # ========================================================
+    four_week = str(period_type or "").strip().lower() in (
+        "4 weken", "4-weken", "4_weken", "vier weken", "four weeks"
+    )
+    interval_min, interval_max = (23, 33) if four_week else (20, 40)
 
     for merchant, group in data.groupby("merchant"):
-
         group = group.sort_values("date").copy()
-
-        if group.empty:
+        counts = group.groupby("financial_period_start").size()
+        # Exactly one payment per period helps avoid mistaking regular shopping
+        # at the same merchant for a recurring bill.
+        if any(int(counts.get(period_start, 0)) != 1 for period_start in completed_starts):
             continue
 
-        transaction_count = len(group)
-
-        amounts = group["amount"].abs()
-
-        mean_amount = float(
-            amounts.mean()
-        )
-
-        if mean_amount == 0:
+        period_rows = []
+        for period_start in completed_starts:
+            match = group[group["financial_period_start"] == period_start]
+            if match.empty:
+                period_rows = []
+                break
+            period_rows.append(match.iloc[0])
+        if len(period_rows) != 3:
             continue
 
-        # ====================================================
-        # ONE-TIME TRANSACTION
-        # ====================================================
-
-        if transaction_count == 1:
-
-            amount = float(
-                amounts.iloc[0]
-            )
-
-            # Eenmalig onder €150:
-            # volledig negeren.
-            if amount < 150:
-                continue
-
-            transaction_date = group["date"].iloc[0]
-
-            next_occurrence = (
-                transaction_date
-                + pd.DateOffset(years=1)
-            )
-
-            if (
-                "category" in group.columns
-                and not group["category"].mode().empty
-            ):
-                category = (
-                    group["category"]
-                    .mode()
-                    .iloc[0]
-                )
-            else:
-                category = "Overig"
-
-            results.append(
-                {
-                    "merchant": merchant,
-                    "category": category,
-                    "frequency": "Jaarlijks",
-                    "expected_amount": amount,
-                    "last_occurrence": (
-                        transaction_date
-                        .date()
-                        .isoformat()
-                    ),
-                    "next_occurrence": (
-                        next_occurrence
-                        .date()
-                        .isoformat()
-                    ),
-                    "reliability": "Hoog",
-                    "flow": "Uitgave",
-                    "is_one_time_large": True,
-                }
-            )
-
+        period_rows = sorted(period_rows, key=lambda row: row["date"])
+        dates = [pd.Timestamp(row["date"]) for row in period_rows]
+        intervals = [(dates[index] - dates[index - 1]).days for index in range(1, len(dates))]
+        median_interval = float(pd.Series(intervals).median())
+        if not interval_min <= median_interval <= interval_max:
             continue
 
-        # ====================================================
-        # TRANSACTION INTERVALS
-        # ====================================================
-
-        dates = group["date"].tolist()
-
-        intervals = [
-            (
-                dates[index]
-                - dates[index - 1]
-            ).days
-            for index in range(
-                1,
-                len(dates),
-            )
-        ]
-
-        if not intervals:
+        amounts = [abs(float(row["amount"])) for row in period_rows]
+        mean_amount = float(sum(amounts) / len(amounts))
+        if mean_amount <= 0:
             continue
 
-        median_interval = float(
-            pd.Series(intervals).median()
-        )
-
-        # ====================================================
-        # WEEK COVERAGE
-        # ====================================================
-
-        group["week"] = (
-            group["date"]
-            .dt.to_period("W")
-        )
-
-        first_week = (
-            group["date"]
-            .min()
-            .to_period("W")
-        )
-
-        last_week = (
-            group["date"]
-            .max()
-            .to_period("W")
-        )
-
-        total_weeks = (
-            last_week.ordinal
-            - first_week.ordinal
-            + 1
-        )
-
-        weeks_with_transaction = (
-            group["week"]
-            .nunique()
-        )
-
-        weekly_coverage = (
-            weeks_with_transaction /
-            total_weeks
-            if total_weeks > 0
-            else 0
-        )
-
-        weekly_60_percent = (
-            weekly_coverage >= 0.60
-        )
-
-        # ====================================================
-        # LAST 3 MONTHS
-        # ====================================================
-
-        group["month"] = (
-            group["date"]
-            .dt.to_period("M")
-        )
-
-        latest_month = (
-            group["date"]
-            .max()
-            .to_period("M")
-        )
-
-        last_three_months = {
-            latest_month,
-            latest_month - 1,
-            latest_month - 2,
-        }
-
-        months_with_transaction = set(
-            group["month"].unique()
-        )
-
-        last_3_months_present = (
-            last_three_months
-            .issubset(
-                months_with_transaction
-            )
-        )
-
-        # ====================================================
-        # DETERMINE FREQUENCY
-        # ====================================================
-
-        frequency = None
-        days = None
-
-        # ----------------------------------------------------
-        # WEEKLY
-        # ----------------------------------------------------
-
-        if (
-            6 <= median_interval <= 8
-            and weekly_60_percent
-        ):
-
-            frequency = "Wekelijks"
-            days = 7
-
-        # ----------------------------------------------------
-        # MONTHLY
-        # ----------------------------------------------------
-
-        elif (
-            25 <= median_interval <= 35
-            and (
-                weekly_60_percent
-                or last_3_months_present
-            )
-        ):
-
-            frequency = "Maandelijks"
-            days = 30
-
-        # ----------------------------------------------------
-        # QUARTERLY
-        # ----------------------------------------------------
-
-        elif 80 <= median_interval <= 100:
-
-            frequency = "Per kwartaal"
-            days = 90
-
-        # ----------------------------------------------------
-        # YEARLY
-        # ----------------------------------------------------
-
-        elif 350 <= median_interval <= 380:
-
-            frequency = "Jaarlijks"
-            days = 365
-
-        # Geen herkenbaar patroon
-        else:
-            continue
-
-        # ====================================================
-        # AMOUNT VARIATION
-        # ====================================================
-
-        variation = float(
-            (
-                amounts.max()
-                - amounts.min()
-            )
-            / mean_amount
-        )
-
-        if variation <= 0.15:
-
-            reliability = "Hoog"
-
-        elif variation <= 0.30:
-
-            reliability = "Gemiddeld"
-
-        else:
-
-            reliability = "Laag"
-
-        # ====================================================
-        # CATEGORY
-        # ====================================================
-
-        if (
-            "category" in group.columns
-            and not group["category"].mode().empty
-        ):
-
-            category = (
-                group["category"]
-                .mode()
-                .iloc[0]
-            )
-
-        else:
-
-            category = "Overig"
-
-        # ====================================================
-        # OCCURRENCES
-        # ====================================================
-
-        last_occurrence = (
-            group["date"].max()
-        )
-
+        variation = (max(amounts) - min(amounts)) / mean_amount
+        reliability = "Hoog" if variation <= 0.15 else ("Gemiddeld" if variation <= 0.30 else "Laag")
+        categories = [str(row.get("category", "Overig") or "Overig") for row in period_rows]
+        category = pd.Series(categories).mode().iloc[0] if categories else "Overig"
+        last_occurrence = dates[-1]
         next_occurrence = (
-            last_occurrence
-            + pd.Timedelta(days=days)
+            last_occurrence + pd.Timedelta(days=28)
+            if four_week
+            else last_occurrence + pd.DateOffset(months=1)
         )
 
-        # ====================================================
-        # RESULT
-        # ====================================================
+        period_amounts = {}
+        for period_start, row, amount in zip(completed_starts, reversed(period_rows), reversed(amounts)):
+            period_amounts[period_start.strftime("%d-%m-%Y")] = amount
 
-        results.append(
-            {
-                "merchant": merchant,
-                "category": category,
-                "frequency": frequency,
-                "expected_amount": mean_amount,
-                "last_occurrence": (
-                    last_occurrence
-                    .date()
-                    .isoformat()
-                ),
-                "next_occurrence": (
-                    next_occurrence
-                    .date()
-                    .isoformat()
-                ),
-                "reliability": reliability,
-                "flow": "Uitgave",
-                "is_one_time_large": False,
-            }
-        )
+        results.append({
+            "merchant": merchant,
+            "category": category,
+            "frequency": "Elke 4 weken" if four_week else "Maandelijks",
+            "expected_amount": mean_amount,
+            "last_occurrence": last_occurrence.date().isoformat(),
+            "next_occurrence": next_occurrence.date().isoformat(),
+            "reliability": reliability,
+            "flow": "Uitgave",
+            "is_one_time_large": False,
+            "period_amounts": period_amounts,
+            "period_count": 3,
+        })
 
-    return results
-
+    return sorted(results, key=lambda item: item.get("expected_amount", 0), reverse=True)
 
 
 # ============================================================
